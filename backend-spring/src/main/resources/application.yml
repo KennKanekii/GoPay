@@ -1,0 +1,7 @@
+server:
+  port: 8080
+
+gopay:
+  # Reuse the same file-backed storage the Node demo used (so existing users still work).
+  dataDir: ../backend/data
+

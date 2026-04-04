@@ -1,0 +1,33 @@
+[ {
+  "id" : "user_6472744b886f0f1c",
+  "name" : "Test User",
+  "identifier" : "test@example.com",
+  "passwordSalt" : "48b7e05c9e35bfa53dc8d20e2eb51c11",
+  "passwordHash" : "5dbd5a107ba6cbb069f68748474fba645b8dd9855e3dd2001a601d075f0483bd",
+  "balance" : 9500.0,
+  "createdAt" : "2026-03-20T08:41:34.200Z"
+}, {
+  "id" : "user_90ba1a56ad5dd250",
+  "name" : "Yash Vardhan Sharma",
+  "identifier" : "yash.rpsp@gmail.com",
+  "passwordSalt" : "8f9013a522e6578dba252cb1a50a27fd",
+  "passwordHash" : "148969dcb4f924b78927c98f6a069eb577f2fef398c49aa66722713141f66c3e",
+  "balance" : 11000.0,
+  "createdAt" : "2026-03-20T08:43:47.349Z"
+}, {
+  "id" : "user_118fcf72db9892b2",
+  "name" : "Demo User",
+  "identifier" : "demo2@example.com",
+  "passwordSalt" : "e2e724f5aa2ffe85ea847dc800ce921f",
+  "passwordHash" : "e6d6e7a84e7c446ec43c1db2cc183c540a6b40cd0da49a553b53fc303f9b53c1",
+  "balance" : 10000.0,
+  "createdAt" : "2026-03-20T09:53:36.889846100Z"
+}, {
+  "id" : "user_811d543c250ef071",
+  "name" : "Harsh",
+  "identifier" : "yashsh.rpsp@gmail.com",
+  "passwordSalt" : "5a7dcda1a6c12d0d93f82a2de5880602",
+  "passwordHash" : "afa7255f73908a58910d8fd94fd6575c090cf1d9f15cb058e66aa50f48a8149b",
+  "balance" : 9500.0,
+  "createdAt" : "2026-04-04T08:43:30.415953Z"
+} ]
