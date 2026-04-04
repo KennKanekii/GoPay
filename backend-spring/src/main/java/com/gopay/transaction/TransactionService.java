@@ -129,6 +129,21 @@ public class TransactionService {
     return resp;
   }
 
+  /** Read all raw transactions for a specific userId — used by CreditService. */
+  public List<Transaction> getRawTransactionsForUser(String userId) {
+    return readTransactions().stream()
+        .filter(t -> Objects.equals(t.fromUserId, userId) || Objects.equals(t.toUserId, userId))
+        .collect(Collectors.toList());
+  }
+
+  /** Expose Transaction type so other packages can use it. */
+  public static class TransactionData {
+    public String fromUserId;
+    public String toUserId;
+    public double amount;
+    public String createdAt;
+  }
+
   public List<TransactionController.TxnEntry> getHistory(String authHeader) {
     StoredUser user = authService.getUserByToken(authHeader);
     List<Transaction> all = readTransactions();
@@ -192,7 +207,7 @@ public class TransactionService {
   // Storage DTO
   // ---------------------------------------------------------------------------
 
-  static class Transaction {
+  public static class Transaction {
     public String id;
     public String fromUserId;
     public String fromName;

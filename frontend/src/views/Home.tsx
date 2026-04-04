@@ -14,11 +14,6 @@ export function Home() {
   return (
     <div className="grid items-start gap-10 md:grid-cols-2">
       <section>
-        <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--gopay-border)] bg-white/70 px-3 py-1 text-xs font-semibold text-[color:var(--gopay-muted)]">
-          <span className="h-2 w-2 rounded-full bg-[color:var(--gopay-primary)]" />
-          <span>Sea‑green fintech super‑app starter</span>
-        </div>
-
         <h1 className="mt-5 text-4xl font-extrabold tracking-tight text-[color:var(--gopay-fg)] md:text-5xl">
           Pay instantly. Track everything. Borrow smarter.
         </h1>
