@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --gopay-bg: #ffffff;
+  --gopay-fg: #0b1220;
+  --gopay-muted: #5b6b7a;
+  --gopay-border: rgba(12, 79, 79, 0.14);
+  --gopay-primary: #0f8f8a; /* sea-green */
+  --gopay-primary-2: #12b3a5;
+  --gopay-primary-3: #e6fbf7;
+  --gopay-shadow: 0 10px 30px rgba(9, 56, 56, 0.12);
+
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Smooth page transitions (Chrome/Edge) */
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 0.25s;
+  animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(18, 179, 165, 0.18), transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, rgba(15, 143, 138, 0.14), transparent 60%),
+    var(--gopay-bg);
+  color: var(--gopay-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Apple Color Emoji",
+    "Segoe UI Emoji";
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+

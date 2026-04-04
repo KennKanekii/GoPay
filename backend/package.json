@@ -1,0 +1,29 @@
+{
+  "name": "gopay-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx server.tsx",
+    "start:node": "NODE_OPTIONS=\"--import tsx\" node server.tsx",
+    "dev": "node --import tsx --watch server.tsx",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.12.0",
+    "eslint": "^9.39.4",
+    "globals": "^17.4.0",
+    "tsx": "^4.20.5",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.56.1"
+  }
+}
+

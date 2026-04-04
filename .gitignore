@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+backend-spring/target/
+
+# Environment (templates only — copy from .env.example)
+.env
+.env.local
+**/.env
+**/.env.development
+**/.env.production
+!**/.env.example
+
+# Local runtime data
+backend/data/sessions.json
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
