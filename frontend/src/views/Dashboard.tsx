@@ -15,6 +15,8 @@ function authHeaders() {
 
 type BalanceResponse = { balance: number; currency: string }
 
+type CreditPreview = { score: number; riskBand: string; colour: string }
+
 type TxnEntry = {
   id: string
   direction: 'SENT' | 'RECEIVED'
@@ -62,6 +64,7 @@ export function Dashboard() {
   const [balanceLoading, setBalanceLoading] = useState(true)
   const [txns, setTxns] = useState<TxnEntry[]>([])
   const [txnsLoading, setTxnsLoading] = useState(true)
+  const [credit, setCredit] = useState<CreditPreview | null>(null)
 
   const token = useMemo(() => getToken(), [])
 
@@ -89,6 +92,14 @@ export function Dashboard() {
       .finally(() => { setTxnsLoading(false) })
   }, [token])
 
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API}/api/v1/credit/score`, { headers: authHeaders() })
+      .then((r) => r.json() as Promise<CreditPreview>)
+      .then((d) => { setCredit(d) })
+      .catch(() => null)
+  }, [token])
+
   const isLoggedIn = Boolean(token)
 
   return (
@@ -114,15 +125,15 @@ export function Dashboard() {
       <div className="grid gap-6 md:grid-cols-3">
         <Card
           subtitle="Wallet balance"
-          title={balance !== null ? formatINR(balance) : '—'}
+          title={balance === null ? '—' : formatINR(balance)}
           loading={balanceLoading}
         >
-          {!isLoggedIn ? (
+          {isLoggedIn ? (
+            <div className="text-sm text-(--gopay-muted)">Updated just now</div>
+          ) : (
             <div className="text-sm text-(--gopay-muted)">
               <Link to="/login" className="font-semibold text-(--gopay-primary)">Log in</Link> to see your balance.
             </div>
-          ) : (
-            <div className="text-sm text-(--gopay-muted)">Updated just now</div>
           )}
         </Card>
 
@@ -140,6 +151,38 @@ export function Dashboard() {
         </Card>
       </div>
 
+      {/* Credit Score preview */}
+      {isLoggedIn ? (
+        <section className="rounded-3xl border border-(--gopay-border) bg-white/70 p-6 shadow-(--gopay-shadow)">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-(--gopay-muted)">Credit Score</div>
+              <div className="mt-1 flex items-center gap-3">
+                {credit ? (
+                  <>
+                    <span className="text-3xl font-extrabold tracking-tight" style={{ color: credit.colour }}>
+                      {credit.score}
+                    </span>
+                    <span
+                      className="rounded-full px-2.5 py-0.5 text-xs font-bold text-white"
+                      style={{ background: credit.colour }}
+                    >
+                      {credit.riskBand.replace('_', ' ')}
+                    </span>
+                  </>
+                ) : (
+                  <span className="animate-pulse text-xl font-bold text-(--gopay-muted)">Loading…</span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-(--gopay-muted)">out of 900</p>
+            </div>
+            <Link to="/credit">
+              <Button variant="ghost" className="shrink-0 text-sm">View full report →</Button>
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
       {/* Transaction history */}
       <section className="rounded-3xl border border-(--gopay-border) bg-white/70 p-6 shadow-(--gopay-shadow)">
         <div className="mb-4 flex items-center justify-between">
@@ -152,17 +195,14 @@ export function Dashboard() {
           </Link>
         </div>
 
-        {!isLoggedIn ? (
-          <div className="rounded-2xl border border-(--gopay-border) bg-white p-6 text-center text-sm text-(--gopay-muted)">
-            <Link to="/login" className="font-semibold text-(--gopay-primary)">Log in</Link> to see your transactions.
-          </div>
-        ) : txnsLoading ? (
+        {isLoggedIn && txnsLoading && (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-16 animate-pulse rounded-2xl bg-gray-100" />
             ))}
           </div>
-        ) : txns.length === 0 ? (
+        )}
+        {isLoggedIn && !txnsLoading && txns.length === 0 && (
           <div className="rounded-2xl border border-(--gopay-border) bg-white p-8 text-center">
             <div className="text-2xl">💸</div>
             <div className="mt-2 text-sm font-semibold">No transactions yet</div>
@@ -171,7 +211,13 @@ export function Dashboard() {
               <Button className="mt-4">↗ Send Money</Button>
             </Link>
           </div>
-        ) : (
+        )}
+        {!isLoggedIn && (
+          <div className="rounded-2xl border border-(--gopay-border) bg-white p-6 text-center text-sm text-(--gopay-muted)">
+            <Link to="/login" className="font-semibold text-(--gopay-primary)">Log in</Link> to see your transactions.
+          </div>
+        )}
+        {isLoggedIn && !txnsLoading && txns.length > 0 && (
           <div className="grid gap-3">
             {txns.map((t) => (
               <div
