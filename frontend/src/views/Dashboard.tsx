@@ -26,6 +26,9 @@ type TxnEntry = {
   note: string
   status: string
   createdAt: string
+  fraudScore: number
+  fraudRiskLevel: string
+  fraudSignals: string[]
 }
 
 function formatINR(amount: number) {
@@ -57,6 +60,13 @@ function Card({
       {children ? <div className="mt-5">{children}</div> : null}
     </section>
   )
+}
+
+function FraudBadge({ level }: Readonly<{ level: string }>) {
+  let cls = 'bg-yellow-100 text-yellow-700'
+  if (level === 'CRITICAL') cls = 'bg-red-100 text-red-700'
+  else if (level === 'HIGH') cls = 'bg-orange-100 text-orange-700'
+  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${cls}`}>{level}</span>
 }
 
 export function Dashboard() {
@@ -122,7 +132,7 @@ export function Dashboard() {
       </div>
 
       {/* Top stats */}
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <Card
           subtitle="Wallet balance"
           title={balance === null ? '—' : formatINR(balance)}
@@ -140,6 +150,12 @@ export function Dashboard() {
         <Card subtitle="Quick action" title="Send Money">
           <Link to="/send">
             <Button className="w-full mt-1">↗ Send now</Button>
+          </Link>
+        </Card>
+
+        <Card subtitle="Security" title="Fraud Shield">
+          <Link to="/fraud">
+            <Button variant="ghost" className="w-full mt-1">View risk report →</Button>
           </Link>
         </Card>
 
@@ -167,7 +183,7 @@ export function Dashboard() {
                       className="rounded-full px-2.5 py-0.5 text-xs font-bold text-white"
                       style={{ background: credit.colour }}
                     >
-                      {credit.riskBand.replace('_', ' ')}
+                      {(credit.riskBand ?? '').replaceAll('_', ' ')}
                     </span>
                   </>
                 ) : (
@@ -243,7 +259,7 @@ export function Dashboard() {
                     <div className="text-xs text-(--gopay-muted)">{formatDate(t.createdAt)}</div>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex flex-col items-end gap-1">
                   <div
                     className={`text-sm font-extrabold ${
                       t.direction === 'SENT' ? 'text-red-600' : 'text-green-600'
@@ -251,6 +267,9 @@ export function Dashboard() {
                   >
                     {t.direction === 'SENT' ? '−' : '+'} {formatINR(t.amount)}
                   </div>
+                  {t.fraudRiskLevel && t.fraudRiskLevel !== 'LOW' && t.direction === 'SENT' && (
+                    <FraudBadge level={t.fraudRiskLevel} />
+                  )}
                   <div className="text-xs text-(--gopay-muted)">{t.status}</div>
                 </div>
               </div>

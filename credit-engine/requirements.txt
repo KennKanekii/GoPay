@@ -2,3 +2,5 @@ flask==3.0.3
 scikit-learn==1.5.2
 numpy==1.26.4
 joblib==1.4.2
+pandas>=2.0.0
+sdv>=1.12.0

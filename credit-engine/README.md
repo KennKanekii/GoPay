@@ -36,17 +36,32 @@ a **rule-based score** so the feature still works.
 ```bash
 cd credit-engine
 
-# 1. Install dependencies (all free, no paid APIs)
-pip install -r requirements.txt
+# 1) Create isolated virtual environment (recommended)
+python -m venv .venv
 
-# 2. Train the model (generates model.pkl from 15,000 synthetic profiles)
-python train.py
+# 2) Install dependencies into venv
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
 
-# 3. Start the scoring API
-python app.py
+# 3) (Optional, recommended) Generate SDV-enhanced training data
+./.venv/Scripts/python.exe generate_sdv_data.py --model auto --seed-rows 5000 --rows 60000
+
+# 4) Train the model (auto-uses credit_sdv_data.csv if present)
+./.venv/Scripts/python.exe train.py
+
+# 5) Start the scoring API
+./.venv/Scripts/python.exe app.py
 ```
 
 Service runs on `http://localhost:5001`.
+
+## Environment health checks
+
+```bash
+cd credit-engine
+./.venv/Scripts/python.exe -m pip check
+```
+
+If this reports `No broken requirements found.`, your local environment is clean and isolated from global Python package conflicts.
 
 ## Retraining on real data
 

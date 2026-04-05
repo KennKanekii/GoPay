@@ -1,0 +1,27 @@
+[ {
+  "id" : "fe_1775296292242",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toIdentifier" : "test@example.com",
+  "amount" : 500.0,
+  "fraudScore" : 0,
+  "riskLevel" : "LOW",
+  "recommendation" : "ALLOW",
+  "signals" : [ ],
+  "model" : "ml_random_forest",
+  "createdAt" : "2026-04-04T09:51:32.242154600Z"
+}, {
+  "id" : "fe_1775386982420",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toIdentifier" : "yashsh.rpsp@gmail.com",
+  "amount" : 500.0,
+  "fraudScore" : 0,
+  "riskLevel" : "LOW",
+  "recommendation" : "ALLOW",
+  "signals" : [ ],
+  "model" : "ml_random_forest",
+  "createdAt" : "2026-04-05T11:03:02.420155Z"
+} ]

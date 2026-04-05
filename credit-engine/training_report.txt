@@ -1,0 +1,20 @@
+============================================================
+GoPay Credit Engine — Training Report
+============================================================
+Data source    : SDV-enhanced  (credit_sdv_data.csv, 60,000 rows)
+Training rows  : 48,000
+Test rows      : 12,000
+Model          : GradientBoostingRegressor
+MAE (test)     : 2.09 score points
+R2  (test)     : 0.9989
+CV-5 MAE       : 3.35 score points
+
+Feature importances:
+  wallet_balance                 0.6445
+  total_transactions             0.1214
+  account_age_days               0.1011
+  days_since_last_txn            0.0983
+  total_received                 0.0212
+  total_sent                     0.0134
+  txn_frequency_per_week         0.0001
+  avg_transaction_amount         0.0000

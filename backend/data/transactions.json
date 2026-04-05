@@ -9,7 +9,11 @@
   "amount" : 500.0,
   "note" : "Test payment",
   "status" : "SUCCESS",
-  "createdAt" : "2026-04-04T08:23:38.088394200Z"
+  "createdAt" : "2026-04-04T08:23:38.088394200Z",
+  "fraudScore" : 0,
+  "fraudRiskLevel" : null,
+  "fraudSignals" : null,
+  "fraudRecommendation" : null
 }, {
   "id" : "txn_c6c6f3950294e276",
   "fromUserId" : "user_811d543c250ef071",
@@ -21,5 +25,41 @@
   "amount" : 500.0,
   "note" : "dinner",
   "status" : "SUCCESS",
-  "createdAt" : "2026-04-04T08:43:58.685874100Z"
+  "createdAt" : "2026-04-04T08:43:58.685874100Z",
+  "fraudScore" : 0,
+  "fraudRiskLevel" : null,
+  "fraudSignals" : null,
+  "fraudRecommendation" : null
+}, {
+  "id" : "txn_a089c1ce4d4ca57d",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toUserId" : "user_6472744b886f0f1c",
+  "toName" : "Test User",
+  "toIdentifier" : "test@example.com",
+  "amount" : 500.0,
+  "note" : "Lunch",
+  "status" : "SUCCESS",
+  "createdAt" : "2026-04-04T09:51:32.247153200Z",
+  "fraudScore" : 0,
+  "fraudRiskLevel" : "LOW",
+  "fraudSignals" : [ ],
+  "fraudRecommendation" : "ALLOW"
+}, {
+  "id" : "txn_d6839efeec8b616d",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toUserId" : "user_811d543c250ef071",
+  "toName" : "Harsh",
+  "toIdentifier" : "yashsh.rpsp@gmail.com",
+  "amount" : 500.0,
+  "note" : "dinner",
+  "status" : "SUCCESS",
+  "createdAt" : "2026-04-05T11:03:02.436970800Z",
+  "fraudScore" : 0,
+  "fraudRiskLevel" : "LOW",
+  "fraudSignals" : [ ],
+  "fraudRecommendation" : "ALLOW"
 } ]
