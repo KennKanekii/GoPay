@@ -1,0 +1,83 @@
+======================================================================
+SDV Data Quality Report
+======================================================================
+
+Seed rows     : 5,000
+Generated rows: 60,000
+
+--- Per-feature statistics (seed vs generated) ---
+
+wallet_balance
+  mean  seed=    12264.92   gen=    12262.08   diff=  0.0%
+  std   seed=    19949.47   gen=    16180.95   diff= 18.9%
+  min   seed=       34.29   gen=       34.29
+  max   seed=   283363.57   gen=   174097.59
+total_transactions
+  mean  seed=       28.09   gen=       21.61   diff= 23.1%
+  std   seed=       41.53   gen=       29.68   diff= 28.5%
+  min   seed=        0.00   gen=        0.00
+  max   seed=      809.00   gen=      355.00
+total_sent
+  mean  seed=    10142.86   gen=    10154.94   diff=  0.1%
+  std   seed=    13700.91   gen=    10891.82   diff= 20.5%
+  min   seed=       37.74   gen=       37.74
+  max   seed=   172701.43   gen=   121616.91
+total_received
+  mean  seed=    19703.65   gen=    19753.50   diff=  0.3%
+  std   seed=    29207.05   gen=    23743.07   diff= 18.7%
+  min   seed=       38.23   gen=       38.23
+  max   seed=   351570.34   gen=   292557.15
+avg_transaction_amount
+  mean  seed=     1084.41   gen=      966.92   diff= 10.8%
+  std   seed=     2199.99   gen=     1381.25   diff= 37.2%
+  min   seed=        0.00   gen=        0.00
+  max   seed=    64365.45   gen=    22168.68
+account_age_days
+  mean  seed=      304.49   gen=      320.11   diff=  5.1%
+  std   seed=      310.70   gen=      284.26   diff=  8.5%
+  min   seed=        1.00   gen=        1.00
+  max   seed=     1199.00   gen=     1199.00
+days_since_last_txn
+  mean  seed=       23.59   gen=       23.43   diff=  0.7%
+  std   seed=       24.36   gen=       22.77   diff=  6.5%
+  min   seed=        0.00   gen=        1.00
+  max   seed=      195.00   gen=      159.55
+txn_frequency_per_week
+  mean  seed=        0.88   gen=        0.79   diff=  9.1%
+  std   seed=        1.63   gen=        0.98   diff= 39.7%
+  min   seed=        0.00   gen=        0.00
+  max   seed=       45.00   gen=       11.14
+credit_score
+  mean  seed=      493.89   gen=      489.83   diff=  0.8%
+  std   seed=       93.65   gen=       86.17   diff=  8.0%
+  min   seed=      369.00   gen=      310.00
+  max   seed=      829.00   gen=      872.00
+
+--- Pairwise Pearson correlations (seed vs generated) ---
+
+  wallet_balance                 × total_transactions              seed=+0.379  gen=+0.471  [OK]
+  wallet_balance                 × total_received                  seed=+0.380  gen=+0.565  [DRIFT]
+  wallet_balance                 × account_age_days                seed=+0.488  gen=+0.603  [OK]
+  wallet_balance                 × credit_score                    seed=+0.757  gen=+0.834  [OK]
+  total_transactions             × total_received                  seed=+0.396  gen=+0.461  [OK]
+  total_transactions             × account_age_days                seed=+0.530  gen=+0.490  [OK]
+  total_transactions             × credit_score                    seed=+0.731  gen=+0.707  [OK]
+  total_received                 × account_age_days                seed=+0.518  gen=+0.610  [OK]
+  total_received                 × credit_score                    seed=+0.567  gen=+0.659  [OK]
+  account_age_days               × credit_score                    seed=+0.802  gen=+0.797  [OK]
+
+--- Credit score distribution ---
+
+  300-500 (Poor)     : 35,882
+  500-580 (Fair-)    : 15,603
+  580-670 (Fair+)    : 6,206
+  670-740 (Good)     : 1,629
+  740-800 (V.Good)   : 517
+  800-900 (Excellent): 163
+
+--- Overall quality score ---
+
+  mean component : 0.944
+  std component  : 0.793
+  corr component : 0.843
+  quality score  : 0.876  (target >= 0.65)

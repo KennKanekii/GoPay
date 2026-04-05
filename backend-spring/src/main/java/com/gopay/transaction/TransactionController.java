@@ -4,6 +4,7 @@ import com.gopay.auth.AuthService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -86,6 +87,8 @@ public class TransactionController {
     public double newBalance;
     public String status;
     public String createdAt;
+    public int    fraudScore;
+    public String fraudRiskLevel;
   }
 
   public static class BalanceResponse {
@@ -94,14 +97,17 @@ public class TransactionController {
   }
 
   public static class TxnEntry {
-    public String id;
+    public String       id;
     /** "SENT" or "RECEIVED" */
-    public String direction;
-    public double amount;
-    public String counterpartyName;
-    public String counterpartyIdentifier;
-    public String note;
-    public String status;
-    public String createdAt;
+    public String       direction;
+    public double       amount;
+    public String       counterpartyName;
+    public String       counterpartyIdentifier;
+    public String       note;
+    public String       status;
+    public String       createdAt;
+    public int          fraudScore;
+    public String       fraudRiskLevel;
+    public List<String> fraudSignals = new ArrayList<>();
   }
 }

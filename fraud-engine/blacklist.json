@@ -1,0 +1,33 @@
+{
+  "blockedDomains": [
+    "mailinator.com",
+    "guerrillamail.com",
+    "guerrillamail.net",
+    "guerrillamail.org",
+    "tempmail.com",
+    "temp-mail.org",
+    "throwaway.email",
+    "dispostable.com",
+    "sharklasers.com",
+    "spam4.me",
+    "trashmail.com",
+    "trashmail.net",
+    "yopmail.com",
+    "fakeinbox.com",
+    "maildrop.cc",
+    "getairmail.com",
+    "spamgourmet.com",
+    "spamgourmet.net",
+    "mailnull.com",
+    "spamex.com"
+  ],
+  "blockedEmails": [],
+  "blockedKeywords": [
+    "fraud",
+    "scam",
+    "hack",
+    "steal",
+    "launder"
+  ],
+  "notes": "Maintained by GoPay Trust & Safety. Disposable email domains and known bad actors."
+}

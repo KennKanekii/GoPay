@@ -5,6 +5,7 @@ import com.gopay.auth.AuthService;
 import com.gopay.auth.AuthService.StoredUser;
 import com.gopay.transaction.TransactionService;
 import com.gopay.transaction.TransactionService.Transaction;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -117,8 +118,8 @@ public class CreditService {
       throw new RuntimeException("Python service returned HTTP " + status);
     }
 
-    byte[] resp = conn.getInputStream().readAllBytes();
-    Map<String, Object> json = objectMapper.readValue(resp, Map.class);
+    String raw = readStream(conn.getInputStream());
+    Map<String, Object> json = objectMapper.readValue(raw, Map.class);
 
     CreditController.CreditScoreResponse r = new CreditController.CreditScoreResponse();
     r.userId      = user.id;
@@ -198,6 +199,16 @@ public class CreditService {
 
   private static double round1(double v) {
     return Math.round(v * 10.0) / 10.0;
+  }
+
+  private static String readStream(InputStream is) throws Exception {
+    byte[] buffer = new byte[4096];
+    StringBuilder sb = new StringBuilder();
+    int read;
+    while ((read = is.read(buffer)) != -1) {
+      sb.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
+    }
+    return sb.toString();
   }
 
   private static String bandFor(int score) {
