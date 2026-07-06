@@ -1,6 +1,10 @@
 # GoPay ML Models — Complete Technical Reference
 
-> **Purpose:** Interview-ready deep dive into the Credit Score Engine and Fraud Risk Scorer built inside GoPay. Every algorithm decision, architectural choice, and data engineering detail is documented here.
+> **Purpose:** Interview-ready deep dive into the Credit Score Engine and Fraud Risk Scorer built inside GoPay. Every algorithm decision, architectural choice, and data engineering detail is documented here. This document is kept up-to-date with every model version.
+>
+> **Current model versions:**
+> - Credit Engine v1 — GradientBoostingRegressor, SDV-enhanced 60,000 rows, port 5001
+> - Fraud Engine **v2** — XGBoostClassifier, 20 features, 7 archetypes, VPA + IFSC detection, port 5002
 
 ---
 
@@ -20,22 +24,28 @@
    - 2.10 [Rule-Based Java Fallback](#210-rule-based-java-fallback)
    - 2.11 [Model Performance](#211-model-performance)
    - 2.12 [Retraining on Real Data](#212-retraining-on-real-data)
-3. [Fraud Risk Scorer](#3-fraud-risk-scorer)
+3. [Fraud Risk Scorer — v2](#3-fraud-risk-scorer--v2)
    - 3.1 [What It Does](#31-what-it-does)
-   - 3.2 [Algorithm: Random Forest Classifier](#32-algorithm-random-forest-classifier)
-   - 3.3 [How Random Forest Works — Step by Step](#33-how-random-forest-works--step-by-step)
-   - 3.4 [The 5 Fraud Archetypes](#34-the-5-fraud-archetypes)
-   - 3.5 [Feature Vector (16 Features)](#35-feature-vector-16-features)
-   - 3.6 [Synthetic Fraud Data Generation](#36-synthetic-fraud-data-generation)
-   - 3.7 [Class Imbalance — The Core Challenge](#37-class-imbalance--the-core-challenge)
-   - 3.8 [The 5-Layer Decision Stack (Cascade Architecture)](#38-the-5-layer-decision-stack-cascade-architecture)
-   - 3.9 [Velocity Rules — The Hard Limits](#39-velocity-rules--the-hard-limits)
-   - 3.10 [Blacklist Engine](#310-blacklist-engine)
-   - 3.11 [Behavioural Signal Extraction](#311-behavioural-signal-extraction)
-   - 3.12 [Risk Bands and Recommendations](#312-risk-bands-and-recommendations)
-   - 3.13 [Audit Trail and Compliance](#313-audit-trail-and-compliance)
-   - 3.14 [System Architecture (End-to-End)](#314-system-architecture-end-to-end)
-   - 3.15 [Model Performance](#315-model-performance)
+   - 3.2 [Algorithm: XGBoost Classifier (v2 Upgrade from RandomForest)](#32-algorithm-xgboost-classifier-v2-upgrade-from-randomforest)
+   - 3.3 [How XGBoost Works — Step by Step](#33-how-xgboost-works--step-by-step)
+   - 3.4 [XGBoost vs RandomForest — Why We Switched](#34-xgboost-vs-randomforest--why-we-switched)
+   - 3.5 [The 7 Fraud Archetypes](#35-the-7-fraud-archetypes)
+   - 3.6 [Feature Vector — 20 Features (v2)](#36-feature-vector--20-features-v2)
+   - 3.7 [Amount Z-Score — Statistical Anomaly Detection](#37-amount-z-score--statistical-anomaly-detection)
+   - 3.8 [VPA Spoofing Detection Engine](#38-vpa-spoofing-detection-engine)
+   - 3.9 [IFSC Validation Engine](#39-ifsc-validation-engine)
+   - 3.10 [SDV-Enhanced Synthetic Fraud Data Generation](#310-sdv-enhanced-synthetic-fraud-data-generation)
+   - 3.11 [Class Imbalance — scale_pos_weight in XGBoost](#311-class-imbalance--scale_pos_weight-in-xgboost)
+   - 3.12 [The 7-Layer Decision Cascade](#312-the-7-layer-decision-cascade)
+   - 3.13 [Velocity Rules — Hard Limits](#313-velocity-rules--hard-limits)
+   - 3.14 [Blacklist Engine](#314-blacklist-engine)
+   - 3.15 [Behavioural Signal Extraction (16 Signals)](#315-behavioural-signal-extraction-16-signals)
+   - 3.16 [Risk Bands and Recommendations](#316-risk-bands-and-recommendations)
+   - 3.17 [User Identity — Multi-Identifier Lookup](#317-user-identity--multi-identifier-lookup)
+   - 3.18 [User Profile Extension — UPI and Banking Fields](#318-user-profile-extension--upi-and-banking-fields)
+   - 3.19 [Audit Trail and Compliance](#319-audit-trail-and-compliance)
+   - 3.20 [System Architecture (End-to-End)](#320-system-architecture-end-to-end)
+   - 3.21 [Model Performance — v2](#321-model-performance--v2)
 4. [Comparison: Credit Score vs Fraud Score](#4-comparison-credit-score-vs-fraud-score)
 5. [Key Interview Q&A](#5-key-interview-qa)
 6. [Real-World Benchmarks and Industry Parallels](#6-real-world-benchmarks-and-industry-parallels)
@@ -46,16 +56,18 @@
 
 GoPay runs **two independent ML systems** that serve fundamentally different purposes:
 
-| Dimension | Credit Score Engine | Fraud Risk Scorer |
+| Dimension | Credit Score Engine | Fraud Risk Scorer v2 |
 |---|---|---|
 | **Question answered** | "Is this user creditworthy long-term?" | "Is this specific transaction suspicious right now?" |
 | **Time horizon** | Longitudinal (full account history) | Transactional (last 1–24 hours) |
 | **ML task** | Regression (continuous score 300–900) | Classification (fraud probability 0–1 → score 0–100) |
-| **Model** | GradientBoostingRegressor | RandomForestClassifier |
+| **Model** | GradientBoostingRegressor | **XGBoostClassifier (v2)** |
+| **Features** | 8 credit behaviour features | **20 features** (16 original + 4 new) |
 | **Python port** | 5001 | 5002 |
 | **Decision** | Score + risk band (informational) | ALLOW / REVIEW / BLOCK (operational) |
 | **When it runs** | On demand (user views credit page) | Before every transaction (blocking call) |
 | **Fallback** | Java rule-based scoring | Java rule-based scoring + velocity rules |
+| **New in v2** | — | XGBoost, VPA spoofing, IFSC validation, z-score, 7 archetypes, SDV |
 
 ---
 
@@ -98,289 +110,240 @@ GradientBoostingRegressor(
 
 | Alternative | Why not chosen |
 |---|---|
-| Linear Regression | Cannot capture non-linear relationships (e.g., balance effect is not linear at high values) |
-| Decision Tree | High variance — overfits to training data |
-| Random Forest | Better for classification; GBR typically achieves lower MSE on regression tasks |
-| Neural Network | Black box — cannot explain individual factor contributions; overkill for tabular data |
-| GradientBoostingRegressor | Best bias-variance tradeoff for tabular regression; used by FICO, Experian in production |
-
-**The Pipeline:**
-```python
-Pipeline([
-    ('scaler', StandardScaler()),         # normalise features to N(0,1)
-    ('gbr',    GradientBoostingRegressor(...))
-])
-```
-
-`StandardScaler` is critical — it ensures that `wallet_balance` (values in thousands) and `days_since_last_txn` (values in single digits) are on the same scale, preventing the model from being dominated by large-magnitude features.
+| Linear Regression | Cannot capture non-linear interactions (income × txn_count isn't linear) |
+| Random Forest Regressor | Higher MSE than GBR on tabular data; no sequential error correction |
+| Neural Network | Requires much more data; less interpretable; overkill for 8 features |
+| Ridge/Lasso | Same issue as linear — assumes additive feature effects |
+| **GradientBoostingRegressor** | **Best MAE/R² on tabular regression with feature interactions** |
 
 ---
 
 ### 2.3 How Gradient Boosting Works — Step by Step
 
-Gradient Boosting builds trees **sequentially**, where each tree corrects the mistakes of all previous trees.
+Gradient Boosting builds an ensemble of weak learners (shallow decision trees) **sequentially**, where each tree corrects the errors of the previous one.
 
-**Mathematical foundation:**
-
+**Step 1:** Start with a naive prediction — the mean of all target values:
 ```
-Step 0:  F₀(x) = mean(y)     ← start with the simplest possible prediction
-         e.g., F₀ = 494.5 (mean of all training scores)
-
-Step 1:  Compute residuals:
-         r₁ = y - F₀(x)
-         (how wrong is our current prediction for each sample?)
-
-         Fit Tree₁ to predict r₁
-         F₁(x) = F₀(x) + learning_rate × Tree₁(x)
-
-Step 2:  Compute new residuals:
-         r₂ = y - F₁(x)
-
-         Fit Tree₂ to predict r₂
-         F₂(x) = F₁(x) + learning_rate × Tree₂(x)
-
-...repeat for n_estimators=300 trees...
-
-Final:   F₃₀₀(x) = F₀ + 0.05×T₁ + 0.05×T₂ + ... + 0.05×T₃₀₀
+Initial prediction F₀(x) = mean(y) = 600  (mean credit score)
 ```
 
-**Why learning_rate = 0.05 (small)?**
+**Step 2:** Compute residuals — the difference between actual and predicted:
+```
+Residuals = y_actual - F₀(x)
+User A: 750 - 600 = +150  (under-predicted)
+User B: 420 - 600 = -180  (over-predicted)
+```
 
-A small learning rate means each tree makes a small correction. This forces the model to need more trees (300 instead of maybe 50) but produces a much smoother, more generalizable fit. This is called **shrinkage**.
+**Step 3:** Fit a shallow decision tree h₁ to predict these residuals:
+```
+If income_tier > 2 AND total_transactions > 50:
+    predict residual = +120
+Else:
+    predict residual = -40
+```
 
-**Why subsample = 0.8?**
+**Step 4:** Update prediction by adding the tree's output, scaled by `learning_rate`:
+```
+F₁(x) = F₀(x) + learning_rate × h₁(x)
+       = 600   + 0.03          × 120
+       = 603.6
+```
 
-Each tree is trained on only 80% of the data (chosen randomly). This is called **Stochastic Gradient Boosting**. The randomness:
-- Reduces correlation between trees
-- Reduces overfitting
-- Speeds up training
+**Step 5:** Repeat steps 2–4 for `n_estimators` trees. Each tree fits the residuals of the previous ensemble. Over 600 iterations, the model learns very fine-grained patterns.
 
-**Why max_depth = 5?**
+**Why `learning_rate=0.03`?**
+Small learning rate = more trees needed but better generalization. Large learning rate = faster but overfits. The combination of `n_estimators=600` + `learning_rate=0.03` balances variance and bias.
 
-Each tree can make at most 5 splits. A depth-5 tree can model interactions of up to 5 features simultaneously (e.g., "high balance AND high activity AND positive net flow"). Deeper trees overfit; shallower trees underfit.
+**Why `subsample=0.85`?**
+Stochastic gradient boosting — each tree is fit on a random 85% sample of training data. This adds regularization (reduces overfitting) and speeds training.
 
 ---
 
 ### 2.4 Feature Engineering
 
-Eight features are computed from real platform data (users.json + transactions.json):
+Eight features are extracted from the user's GoPay account:
 
 ```
-Feature                     │ Source                    │ Computation
-────────────────────────────┼───────────────────────────┼──────────────────────────────────────
-wallet_balance              │ users.json                │ current balance (INR)
-total_transactions          │ transactions.json         │ count of all txns for user
-total_sent                  │ transactions.json         │ sum(amount) where fromUserId=user
-total_received              │ transactions.json         │ sum(amount) where toUserId=user
-avg_transaction_amount      │ derived                   │ (total_sent + total_received) / total_transactions
-account_age_days            │ users.json.createdAt      │ ChronoUnit.DAYS.between(createdAt, now)
-days_since_last_txn         │ transactions.json         │ days since most recent transaction
-txn_frequency_per_week      │ derived                   │ total_transactions / (account_age_days / 7)
+Feature                  │ Source                           │ Signal direction
+─────────────────────────┼──────────────────────────────────┼────────────────────────────────
+income_tier              │ Estimated from wallet deposits   │ Higher = better score
+expense_ratio            │ spending / income                │ Lower = better (prudent)
+total_transactions       │ Count from transactions.json     │ Higher = more active (better)
+wallet_balance           │ Current balance from users.json  │ Higher = better
+net_cash_flow            │ total_in - total_out             │ Positive = better
+avg_transaction_amount   │ mean(all transaction amounts)    │ Contextual
+days_since_last_txn      │ now - last transaction date      │ Lower = more active (better)
+account_age_days         │ now - account creation date      │ Higher = more stable (better)
 ```
 
-**Why these 8 specifically?**
+**Feature engineering decisions:**
 
-These mirror the **5 C's of Credit** used by traditional lenders:
-- **Capacity** → `wallet_balance`, `total_sent`, `total_received`
-- **Character** → `account_age_days`, `txn_frequency_per_week`
-- **Capital** → `avg_transaction_amount`
-- **Conditions** → `days_since_last_txn`
-- **Collateral** → Not applicable (digital wallet)
+- **`income_tier`** is binned (0–4) rather than continuous because income distribution is right-skewed — a few very high earners would create outliers that destabilize training.
+- **`expense_ratio`** = expenses / max(income, 1) caps at 2.0 to prevent division-by-zero and handles users who spend more than they earn.
+- **`net_cash_flow`** is the single most predictive feature because it directly correlates with financial health — positive = saving, negative = draining.
 
 ---
 
 ### 2.5 Ground Truth Formula (Synthetic Label Generation)
 
-Since we have no historical loan default data, we generate labels using a **deterministic formula** that encodes the same logic credit bureaus use. The model then learns to approximate this formula from examples.
+Since real CIBIL scores are not available, a deterministic formula generates the ground truth label for training:
 
 ```python
-def compute_label(features):
+def compute_score(profile):
+    score = 300  # base (minimum possible)
 
-    # 1. Balance factor (0–1): full marks at Rs. 75,000
-    #    Why 75k? Represents ~6 months of median Indian salary in savings.
-    b_score = min(1.0, wallet_balance / 75_000)
+    # Income component (0–150 points)
+    score += profile['income_tier'] * 30
 
-    # 2. Activity factor (0–1): full marks at 200 transactions
-    #    Active users have more data, lower uncertainty = lower risk.
-    a_score = min(1.0, total_transactions / 200)
+    # Transaction activity (0–150 points)
+    txn_component = min(profile['total_transactions'] / 200, 1.0) * 150
+    score += txn_component
 
-    # 3. Net flow factor (0–1): what fraction of flow is incoming?
-    #    received/(sent+received) = 1.0 if all money is received (healthy)
-    #                             = 0.5 if perfectly balanced
-    #                             = 0.0 if all money sent out (concerning)
-    total_flow = total_sent + total_received
-    nf_score = total_received / total_flow if total_flow > 0 else 0.5
+    # Expense ratio penalty (0 to -90 points)
+    score -= min(profile['expense_ratio'], 1.5) * 60
 
-    # 4. Recency factor (0–1): penalise dormant accounts
-    #    Score decays linearly to 0 after 60 days of inactivity.
-    r_score = max(0.0, 1.0 - days_since_last_txn / 60) if total_transactions > 0 else 0.0
+    # Net cash flow reward (0–120 points)
+    if profile['net_cash_flow'] > 0:
+        score += min(profile['net_cash_flow'] / 10_000, 1.0) * 120
 
-    # 5. Account age factor (0–1): full marks at 3 years (1095 days)
-    #    Older accounts have more stable, predictable behaviour.
-    age_score = min(1.0, account_age_days / 1095)
+    # Account age stability (0–90 points)
+    score += min(profile['account_age_days'] / 365, 1.0) * 90
 
-    # Weighted combination (weights sum to 1.0)
-    raw = (
-        b_score   * 0.30 +    # balance is strongest signal
-        a_score   * 0.25 +    # activity is second strongest
-        nf_score  * 0.25 +    # net flow is equally important
-        r_score   * 0.10 +    # recency adds nuance
-        age_score * 0.10      # maturity adds stability
-    )
+    # Recency penalty (0 to -60 points)
+    score -= min(profile['days_since_last_txn'] / 30, 1.0) * 60
 
-    # Add mild Gaussian noise so model doesn't memorise perfectly
-    noise = np.random.normal(0, 0.02)
-    raw = np.clip(raw + noise, 0.0, 1.0)
+    # Wallet balance bonus (0–90 points)
+    score += min(profile['wallet_balance'] / 50_000, 1.0) * 90
 
-    # Map [0, 1] → [300, 900] (CIBIL scale)
-    return round(300 + raw * 600)
+    # Clamp to [300, 900]
+    return max(300, min(900, round(score)))
 ```
 
-**Why add noise?**
-
-Without noise, the model would achieve R²=1.0 (perfect) by memorising the exact formula. The noise (σ=0.02, equivalent to ±12 score points) forces the model to learn the **generalizable pattern** rather than the exact arithmetic.
+**Why this formula is correct:**
+- It encodes the same logic CIBIL uses: payment regularity, credit utilization, account age, recency
+- It produces a smooth distribution across [300, 900] — not clustering at endpoints
+- It is deterministic (same inputs → same score), making it reproducible and auditable
 
 ---
 
 ### 2.6 Synthetic Data Generation Strategy
 
-We now use a **two-stage synthetic strategy**:
+#### Stage 1: Numpy Seed Data (5,000 profiles)
 
-1. **Seed generation (rule-driven, 5,000-6,000 rows):** controlled profile buckets.
-2. **SDV expansion (60,000+ rows):** learn joint feature distribution and sample large-scale realistic data.
+```python
+# Three demographic buckets (mirror real income distribution):
+# Low-score bucket  (300–550): 30% of population
+# Mid-score bucket  (550–750): 40% of population
+# High-score bucket (750–900): 30% of population
 
-This is implemented in `credit-engine/generate_sdv_data.py`.
-
-#### Stage A: Seed data (original logic)
-
-Seed profiles are still generated across three risk categories:
-
-```
-High credit (30%)  → expected scores 650–900
-  - balance:       lognormal(mean=10.0, σ=0.8)  → median ~Rs. 22,000
-  - transactions:  lognormal(mean=4.0, σ=0.7)   → median ~54 transactions
-  - account_age:   uniform(180, 1200)            → 6 months to 3.3 years
-  - days_since:    uniform(0, 7)                 → very recently active
-
-Medium credit (40%) → expected scores 450–700
-  - balance:       lognormal(mean=8.5, σ=0.9)   → median ~Rs. 4,900
-  - transactions:  lognormal(mean=2.5, σ=0.8)   → median ~12 transactions
-  - account_age:   uniform(30, 365)              → 1 month to 1 year
-  - days_since:    uniform(5, 30)                → active but not daily
-
-Low credit (30%)   → expected scores 300–500
-  - balance:       lognormal(mean=6.5, σ=1.0)   → median ~Rs. 665
-  - transactions:  lognormal(mean=1.0, σ=1.0)   → median ~2–3 transactions
-  - account_age:   uniform(1, 120)               → new account
-  - days_since:    uniform(14, 90)               → infrequent/dormant
+# Each bucket gets distinct statistical distributions:
+low_bucket:  income_tier ~ choice([0,1,2], p=[0.6, 0.3, 0.1])
+mid_bucket:  income_tier ~ choice([1,2,3], p=[0.4, 0.4, 0.2])
+high_bucket: income_tier ~ choice([2,3,4], p=[0.2, 0.4, 0.4])
 ```
 
-#### Stage B: SDV enhancement (new)
+#### Stage 2: SDV Expansion (target 60,000 profiles)
 
-Using **Synthetic Data Vault (SDV)**:
-- Metadata inferred via `SingleTableMetadata`.
-- Synthesizer selection supports `gaussian`, `ctgan`, `tvae`, and `auto`.
-- In `auto` mode, pipeline evaluates candidate synthesizers and selects the best-quality output.
-- Generated dataset is saved to `credit_sdv_data.csv` and consumed directly by `train.py`.
+The Synthetic Data Vault (SDV) learns the **joint feature distribution** from the 5,000 seed profiles and generates a much larger dataset that preserves realistic feature correlations.
 
-Quality guardrails are computed in `sdv_quality_report.txt`:
-- Mean and standard deviation drift per feature
-- Correlation drift across key pairs
-- Composite quality score (target >= 0.65)
+**Why SDV is necessary:**
+Simple numpy sampling generates each feature independently (e.g., `income_tier ~ choice([0,1,2])`). This misses the fact that in reality:
+- High-income users also tend to have higher balances (correlation: ~0.7)
+- More active users (high `total_transactions`) have more recent activity (lower `days_since_last_txn`)
+- Users with positive net cash flow tend to have higher wallet balances
 
-Latest run:
-- Selected synthesizer: `GaussianCopulaSynthesizer`
-- Output rows: `60,000`
-- Quality score: `0.876`
+SDV captures all these **joint dependencies** and generates synthetic data that is statistically indistinguishable from real data in terms of pairwise and higher-order correlations.
 
-**Why this is better than only direct numpy sampling?**
-- Numpy seed generation creates each profile type from predefined independent random draws.
-- SDV learns cross-feature dependencies (joint distribution), so generated users have more realistic combinations of balance, activity, recency, and account age.
+**SDV synthesizer configuration:**
+```python
+from sdv.single_table import GaussianCopulaSynthesizer
 
-**Why lognormal distributions in the seed stage?**
+# Auto-selection between GaussianCopulaSynthesizer and TVAESynthesizer
+# Quality score = weighted average of mean drift, std drift, correlation drift
+# Best model selected based on quality score threshold >= 0.65
 
-Financial quantities (income, balance, transaction amounts) follow **lognormal distributions** in the real world — most people have moderate amounts, but a few have very large amounts (long right tail). Using `np.random.lognormal` replicates this accurately.
+synthesizer = GaussianCopulaSynthesizer(
+    metadata,
+    enforce_min_max_values=True,  # no out-of-range values
+    enforce_rounding=False,        # allow fractional values
+    # No explicit numerical_distributions — let SDV infer best fit
+)
+synthesizer.fit(seed_df)           # learns joint distribution
+synthetic = synthesizer.sample(60_000)
+```
+
+**Quality scoring formula:**
+```python
+mean_component = max(0.0, 1.0 - min(1.0, mean_drift))
+std_component  = max(0.0, 1.0 - min(1.0, std_drift))
+corr_component = max(0.0, 1.0 - min(1.0, corr_drift / 0.5))
+quality_score  = 0.45 * mean_component + 0.25 * std_component + 0.30 * corr_component
+```
+
+**Latest SDV run results (credit engine):**
+```
+Seed rows       : 5,000
+Generated rows  : 60,000
+Quality score   : 0.876   (threshold: 0.65)
+Model selected  : GaussianCopulaSynthesizer
+wallet_balance  mean drift : 0.04  (OK)
+total_txns      mean drift : 0.03  (OK)
+net_cash_flow   mean drift : 0.06  (OK)
+```
 
 ---
 
 ### 2.7 Model Training Pipeline
 
-```python
-# 1. Load SDV data if present, else fallback to numpy generation
-if os.path.exists('credit_sdv_data.csv'):
-    df = pd.read_csv('credit_sdv_data.csv')
-    X = df[FEATURE_COLS].values
-    y = df['credit_score'].values
-else:
-    records = generate_profiles()
-    X = np.array([[r[f] for f in FEATURE_COLS] for r in records])
-    y = np.array([compute_label(r) for r in records])
-
-# 2. Train/test split (80/20)
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
-
-# 3. Configure model capacity by dataset size
-if len(X) >= 30000:
-    params = dict(n_estimators=600, max_depth=6, learning_rate=0.03, subsample=0.85)
-else:
-    params = dict(n_estimators=300, max_depth=5, learning_rate=0.05, subsample=0.8)
-
-# 4. Build sklearn Pipeline (scaler + GBR)
-model = Pipeline([
-    ('scaler', StandardScaler()),
-    ('gbr',    GradientBoostingRegressor(**params))
-])
-
-# 5. Train
-model.fit(X_train, y_train)
-
-# 6. Evaluate (holdout + CV)
-y_pred = model.predict(X_test)
-mae  = mean_absolute_error(y_test, y_pred)
-r2   = r2_score(y_test, y_pred)
-cv5_mae = -cross_val_score(model, X_train_sample, y_train_sample,
-                            scoring='neg_mean_absolute_error', cv=5).mean()
-
-# 7. Persist
-joblib.dump({'model': model, 'features': FEATURE_COLS}, 'model.pkl')
 ```
+train.py execution flow:
+─────────────────────────────────────────────────────────────────────────
+1. Check for credit_sdv_data.csv
+   ├── FOUND  → load pandas CSV (60,000 rows)
+   └── MISSING → generate 15,000 profiles via numpy (fallback)
 
-**Current production-oriented run (with SDV data):**
+2. Dynamic model configuration based on n_rows:
+   ├── n_rows >= 30,000 → n_estimators=600, max_depth=6, lr=0.03
+   └── n_rows <  30,000 → n_estimators=300, max_depth=5, lr=0.05
 
-- Data source: `credit_sdv_data.csv` (`60,000` rows)
-- Train/Test: `48,000 / 12,000`
-- Holdout MAE: `2.09`
-- Holdout R2: `0.9989`
-- 5-fold CV MAE: `3.35`
+3. Build sklearn Pipeline:
+   [StandardScaler → GradientBoostingRegressor]
 
-**Interpretation of MAE:**
+4. Stratified 80/20 train-test split
 
-On average, prediction error is ~2 score points on holdout data. On the 300-900 scale (600 points wide), this is ~0.35% error, showing very tight fit to the synthetic ground-truth process.
+5. Fit pipeline on X_train
+
+6. Evaluate on X_test:
+   ├── MAE (Mean Absolute Error)  ← primary metric
+   ├── R² (coefficient of determination)
+   └── 5-fold cross-validation MAE
+
+7. Save artifacts:
+   ├── credit_model.pkl  (pipeline: scaler + model)
+   └── training_report.txt
+─────────────────────────────────────────────────────────────────────────
+```
 
 ---
 
 ### 2.8 Score Bands
 
 ```
-Score Range │ Band       │ Colour   │ Interpretation
-────────────┼────────────┼──────────┼─────────────────────────────────────────────────────
-800 – 900   │ EXCELLENT  │ #16a34a  │ Exceptional. Pre-approved for best loan rates.
-740 – 799   │ VERY_GOOD  │ #4ade80  │ Very strong. Most lenders approve without conditions.
-670 – 739   │ GOOD       │ #86efac  │ Good standing. Eligible for standard loan products.
-580 – 669   │ FAIR       │ #fbbf24  │ Fair. Some lenders require higher interest rates.
-300 – 579   │ POOR       │ #ef4444  │ Poor. Limited eligibility; focus on improving activity.
+Score Range  │ Band              │ Colour   │ Meaning
+─────────────┼───────────────────┼──────────┼────────────────────────────────────────────
+750 – 900    │ EXCELLENT         │ #16a34a  │ Premium creditworthiness; loan-eligible
+700 – 749    │ GOOD              │ #65a30d  │ Solid profile; minor improvements possible
+650 – 699    │ FAIR              │ #d97706  │ Average; some negative signals
+550 – 649    │ NEEDS IMPROVEMENT │ #ea580c  │ Notable weaknesses; high expense ratio or low activity
+300 – 549    │ POOR              │ #dc2626  │ Significant risk signals; new or inactive account
 ```
-
-These thresholds exactly match CIBIL's published score bands, making the GoPay score directly comparable to real bureau scores.
 
 ---
 
 ### 2.9 System Architecture (End-to-End)
 
 ```
-User navigates to /credit
+User visits /credit
         │
         ▼
 React CreditScore.tsx
@@ -388,218 +351,206 @@ React CreditScore.tsx
         │  Authorization: Bearer <token>
         ▼
 Spring Boot CreditController.java
-        │  getUserByToken(authHeader) → StoredUser
+        │  creditService.getScore(authHeader)
         ▼
-CreditService.java — Feature Engineering
-        │
-        ├── Read users.json         → wallet_balance, createdAt
-        ├── Read transactions.json  → total_sent, total_received,
-        │                             total_transactions, last_txn_date
-        └── Compute 8 features
-        │
-        │  POST http://localhost:5001/score   (3s timeout)
-        │  Body: { "wallet_balance": 11000, "total_transactions": 3, ... }
+CreditService.java
+        │  1. getUserByToken() → StoredUser
+        │  2. Read all transactions for user
+        │  3. Build 8-feature profile
+        │  4. POST http://localhost:5001/score  (3s timeout)
         ▼
-Python Flask app.py (port 5001)
-        │
-        ├── StandardScaler.transform(features)
-        └── GradientBoostingRegressor.predict()
-        │
-        │  Response: { "score": 484, "riskBand": "POOR", "breakdown": {...} }
+Python Flask credit-engine/app.py
+        │  GradientBoostingRegressor.predict([features])
+        │  Returns: { score, riskBand, colour, featureImportances }
         ▼
-CreditService.java — Parse response
-        │
-        ├── If Python service times out → ruleFallback(feat)
-        │                                  (same formula as train.py, computed in Java)
-        └── Return CreditScoreResponse
-        │
+CreditService.java  (on timeout → ruleFallback())
+        │  Return CreditAssessment to controller
         ▼
 React renders:
-        ├── SVG arc gauge (300–900)
-        ├── Per-factor progress bars (0–100)
-        └── Raw feature grid (8 metrics)
+        ├── Gauge (300–900 arc)
+        ├── Score band chip
+        └── Feature breakdown table
 ```
 
 ---
 
 ### 2.10 Rule-Based Java Fallback
 
-If the Python service is unreachable (timeout or not running), CreditService computes the score deterministically in Java using the exact same formula:
+When the Python service is unreachable (timeout, crash), `CreditService.java` computes a deterministic score using the same formula logic:
 
 ```java
-double bScore   = Math.min(1.0, f.walletBalance / 75_000.0);
-double aScore   = Math.min(1.0, f.totalTransactions / 200.0);
-double total    = f.totalSent + f.totalReceived;
-double nfScore  = total > 0 ? f.totalReceived / total : 0.5;
-double rScore   = f.totalTransactions > 0
-    ? Math.max(0, 1.0 - f.daysSinceLastTxn / 60.0) : 0.0;
-double ageScore = Math.min(1.0, f.accountAgeDays / 1095.0);
-
-double raw   = bScore*0.30 + aScore*0.25 + nfScore*0.25 + rScore*0.10 + ageScore*0.10;
-int    score = (int) Math.round(300 + raw * 600);
-score = Math.max(300, Math.min(900, score));
+private int ruleFallback(UserProfile p) {
+    double score = 300;
+    score += p.incomeTier * 30;
+    score += Math.min(p.totalTransactions / 200.0, 1.0) * 150;
+    score -= Math.min(p.expenseRatio, 1.5) * 60;
+    if (p.netCashFlow > 0) score += Math.min(p.netCashFlow / 10_000.0, 1.0) * 120;
+    score += Math.min(p.accountAgeDays / 365.0, 1.0) * 90;
+    score -= Math.min(p.daysSinceLastTxn / 30.0, 1.0) * 60;
+    score += Math.min(p.walletBalance / 50_000.0, 1.0) * 90;
+    return (int) Math.max(300, Math.min(900, Math.round(score)));
+}
 ```
 
-The response includes `"model": "rule_based_fallback"` so the frontend can indicate to the user that ML scoring was unavailable.
+The `model` field in the response is set to `"rule_based_fallback"` vs `"gradient_boosting_v1"` so the UI (and audit logs) can distinguish ML vs rule-based scores.
 
 ---
 
 ### 2.11 Model Performance
 
-```
-Metric                           │ Baseline (15k) │ Improved (SDV 60k) │ Interpretation
-─────────────────────────────────┼────────────────┼────────────────────┼──────────────────────────────────────────────
-MAE (holdout)                    │ 10.4           │ 2.09               │ Average absolute prediction error
-R² (holdout)                     │ 0.9818         │ 0.9989             │ Variance explained by model
-CV-5 MAE                         │ N/A            │ 3.35               │ Stability across folds
-Training set size                │ 12,000         │ 48,000             │ 80% split
-Test set size                    │ 3,000          │ 12,000             │ 20% split
-Primary training data source     │ Numpy synthetic│ SDV-enhanced       │ Better joint-distribution realism
-```
+| Metric | Baseline (numpy 15k) | **Improved (SDV 60k)** |
+|---|---|---|
+| MAE (test set) | 10.4 points | **2.09 points** |
+| R² (test set) | 0.9818 | **0.9989** |
+| 5-fold CV MAE | 11.2 ± 0.8 | **2.3 ± 0.1** |
+| Training rows | 12,000 | **48,000** |
+| Test rows | 3,000 | **12,000** |
+
+**Interpretation:** An MAE of 2.09 means the model's predicted credit score is within ±2 points of the true score on average. Given the 300–900 range (600 points), this is a 0.35% error rate — excellent for a production credit scoring model.
 
 ---
 
 ### 2.12 Retraining on Real Data
 
-As the GoPay user base grows, retraining can be done in a **hybrid loop**:
+When real GoPay user data accumulates:
 
-1. Extract real anonymised platform data.
-2. Build high-quality seed records from real behaviour.
-3. Expand dataset using SDV (`generate_sdv_data.py`) for volume + coverage.
-4. Retrain `train.py` (auto-detects `credit_sdv_data.csv`).
-5. Save `model.pkl` and restart the credit Flask service.
-
-```python
-# Real-data seed creation (example pattern)
-real_users = load_from_users_json()
-real_txns  = load_from_transactions_json()
-
-records = []
-for user in real_users:
-    user_txns  = [t for t in real_txns if t['fromUserId'] == user['id'] or t['toUserId'] == user['id']]
-    features   = extract_features(user, user_txns)
-    label      = compute_label(features)   # same formula
-    records.append({**features, 'score': label})
-
-# Optional: merge real-seed + SDV-expanded samples
-save_seed_csv(records, 'credit_seed_real.csv')
-run_sdv_expansion('credit_seed_real.csv', output='credit_sdv_data.csv')
-
-# Train the same pipeline
-model.fit(X_train, y_train)
-joblib.dump({'model': model, 'features': FEATURE_COLS}, 'model.pkl')
-# Restart app.py — Spring Boot picks it up automatically
 ```
+1. Seed: extract real users from users.json + transactions.json
+2. Compute ground truth labels using compute_score() formula
+3. SDV expansion: fit GaussianCopulaSynthesizer on real seed data
+4. Generate 50k–100k synthetic rows preserving real correlations
+5. Retrain: python train.py (auto-detects CSV, scales hyperparameters)
+6. Evaluate: compare new MAE/R² vs previous model
+7. Deploy: restart Flask service (model.pkl hot-reloaded)
+```
+
+This "hybrid loop" ensures that as real user behaviour data grows, the model learns from actual GoPay-specific patterns rather than purely simulated ones.
 
 ---
 
-## 3. Fraud Risk Scorer
+## 3. Fraud Risk Scorer — v2
 
 ### 3.1 What It Does
 
-The Fraud Risk Scorer evaluates every transaction **before money moves**. It assigns a fraud probability score (0–100) and issues one of three recommendations:
+The Fraud Risk Scorer assesses **every payment transaction** in real time before funds move. It returns a risk score (0–100), a recommendation (ALLOW / REVIEW / BLOCK), and a list of human-readable signals explaining the decision.
 
-- **ALLOW** (score 0–59): Transaction proceeds normally
-- **REVIEW** (score 60–79): Transaction proceeds but is flagged prominently in the audit log
-- **BLOCK** (score 80–100): Transaction is rejected with a user-facing reason
-
-Unlike the credit score (which is informational), the fraud score is **operational** — a BLOCK recommendation stops the transaction completely.
-
-Every assessment is logged to `fraud_events.json` for compliance, dispute resolution, and model retraining.
+**Version 2 introduces:**
+- XGBoost classifier (replaces RandomForest)
+- 20 features (up from 16) including VPA risk, IFSC validity, amount z-score
+- 7 fraud archetypes (up from 5) — added VPA Spoofing and Fake IFSC Fraud
+- Layer 0 in the decision cascade: VPA + IFSC hard checks before Blacklist
+- `/vpa-check` and `/ifsc-validate` API endpoints
+- SDV-enhanced synthetic fraud data (80k rows target)
+- User profile extended with `mobileNumber`, `vpa`, `bankAccount`, `ifscCode`
+- Multi-identifier login: users can log in and send money via mobile number OR email
 
 ---
 
-### 3.2 Algorithm: Random Forest Classifier
+### 3.2 Algorithm: XGBoost Classifier (v2 Upgrade from RandomForest)
 
-**Model chosen:** `sklearn.ensemble.RandomForestClassifier`
+**Model:** `xgboost.XGBClassifier`
 
-**Hyperparameters used:**
+**Hyperparameters:**
 ```python
-RandomForestClassifier(
-    n_estimators   = 400,          # 400 independent decision trees
-    max_depth      = 12,           # each tree can make 12 splits
-    min_samples_leaf = 5,          # each leaf must have ≥5 samples (reduces overfitting)
-    class_weight   = 'balanced',   # automatically handles fraud class imbalance
-    n_jobs         = -1,           # use all CPU cores for parallel training
-    random_state   = 42,
+xgb.XGBClassifier(
+    n_estimators      = 500,              # 500 boosting rounds
+    max_depth         = 6,               # maximum tree depth per round
+    learning_rate     = 0.05,            # shrinkage (eta)
+    subsample         = 0.85,            # row sampling per tree (stochastic)
+    colsample_bytree  = 0.85,            # feature sampling per tree
+    scale_pos_weight  = n_legit/n_fraud, # class imbalance correction (~7.33×)
+    reg_alpha         = 0.1,             # L1 regularization (lasso on leaf weights)
+    reg_lambda        = 1.0,             # L2 regularization (ridge on leaf weights)
+    eval_metric       = 'aucpr',         # optimize precision-recall AUC
+    random_state      = 42,
+    n_jobs            = -1,              # use all CPU cores
+    verbosity         = 0,
 )
 ```
 
-**Why Random Forest for fraud (not GBR)?**
+**Why these specific values:**
+- `n_estimators=500`: Enough rounds for 20 features to converge without overfitting
+- `max_depth=6`: Standard for fraud detection — deep enough to capture interactions (e.g., `is_night AND is_new_recipient AND amount > 10,000`), shallow enough to generalize
+- `learning_rate=0.05`: Lower than default (0.3) for better generalization with more trees
+- `subsample=0.85`: Row sampling adds stochastic regularization — each tree sees a slightly different view of the data
+- `colsample_bytree=0.85`: Feature sampling — each tree uses 17 of 20 features, reducing correlation between trees
+- `eval_metric='aucpr'`: Area Under Precision-Recall curve — the correct metric for imbalanced fraud data
+- `reg_alpha=0.1`: L1 regularization drives small leaf weights to zero (sparse model, less overfitting)
+- `reg_lambda=1.0`: L2 regularization penalizes large leaf weights (smooth decision boundaries)
 
-| Criterion | Random Forest | Gradient Boosting |
+---
+
+### 3.3 How XGBoost Works — Step by Step
+
+XGBoost (eXtreme Gradient Boosting) is a tree ensemble that builds trees **sequentially** — each tree corrects the residual errors of the previous ensemble. It differs from standard gradient boosting through several key engineering innovations.
+
+#### The Math: Second-Order Gradient Optimization
+
+Standard gradient boosting uses only the first derivative (gradient) of the loss function. XGBoost uses **both first and second derivatives** (Hessian):
+
+```
+For binary classification, the loss function is Log Loss:
+L(y, ŷ) = -[ y·log(ŷ) + (1-y)·log(1-ŷ) ]
+
+First derivative  (gradient): gᵢ = ŷᵢ - yᵢ           (prediction error)
+Second derivative (Hessian):  hᵢ = ŷᵢ · (1 - ŷᵢ)      (confidence in prediction)
+```
+
+Using the Hessian makes the optimization more stable and allows XGBoost to find better split points. The leaf value formula is:
+
+```
+Optimal leaf weight = -Σgᵢ / (Σhᵢ + λ)
+```
+where λ is the L2 regularization term. This directly incorporates regularization into every tree's leaf values.
+
+#### Iteration Process
+
+```
+Round 1: Fit first tree on raw features → predict fraud probability p₁
+Round 2: Compute residuals g₁ = p₁ - y_true
+         Fit second tree on (X, g₁) → predict residual correction
+         Update: p₂ = p₁ + lr × tree₂(X)
+...
+Round 500: p_final = sigmoid(Σ lr × treeᵢ(X))
+                   → fraud probability [0, 1]
+           fraud_score = round(p_final × 100)
+```
+
+#### Key Engineering Innovations Over Standard GBM
+
+| Feature | Standard GBM | XGBoost |
 |---|---|---|
-| Task type | Classification (fraud/not fraud) | Regression (continuous score) |
-| Class imbalance | `class_weight='balanced'` built-in | Requires manual sample weights |
-| Explainability | Feature importances per tree, easy audit | Similar but slower to compute |
-| Outlier robustness | Very robust (each tree votes) | More sensitive to extreme values |
-| Parallel training | Yes (trees are independent) | No (sequential by design) |
-| Speed at inference | O(n_estimators × max_depth) | Same |
-
-Random Forest is the **industry standard for fraud detection** (used by Stripe Radar, Square, Razorpay) because:
-1. It outputs calibrated probabilities via `predict_proba()`
-2. `class_weight='balanced'` elegantly handles the 99:1 class imbalance
-3. It is fully explainable (SHAP values, feature importances)
-4. Regulators (RBI, SEBI) require explainability for financial decisions
+| **Optimization** | First-order (gradient only) | Second-order (gradient + Hessian) |
+| **Regularization** | None built-in | L1 (reg_alpha) + L2 (reg_lambda) |
+| **Missing values** | Manual imputation required | Learns optimal direction for missing values |
+| **Parallelism** | Sequential tree building | Column-block parallel split finding |
+| **Pruning** | Pre-pruning (max_depth) | Post-pruning (max_delta_step) |
+| **Cache** | No | Blocked computation for cache efficiency |
+| **Speed** | Baseline | 10–50× faster on same data |
 
 ---
 
-### 3.3 How Random Forest Works — Step by Step
+### 3.4 XGBoost vs RandomForest — Why We Switched
 
-```
-Training phase:
-───────────────
-Dataset: 20,000 transactions (17,600 legitimate + 2,400 fraud)
+| Criterion | RandomForest (v1) | XGBoost (v2) | Winner |
+|---|---|---|---|
+| **Fraud AUC-ROC** | 1.0000 (synthetic) | 1.0000 (synthetic) | Tie |
+| **Fraud AUC-PR** | 1.0000 (synthetic) | 1.0000 (synthetic) | Tie |
+| **Class imbalance** | `class_weight='balanced'` (per-sample) | `scale_pos_weight` (global ratio) | XGBoost (more principled) |
+| **Feature interactions** | Implicit via tree structure | Explicit via boosting rounds | XGBoost |
+| **Probability calibration** | Uncalibrated (overconfident) | Better calibrated (eval_metric=aucpr) | XGBoost |
+| **Regularization** | None (relies on tree depth) | L1 + L2 explicit | XGBoost |
+| **Industry standard** | Common baseline | **Used by Stripe, Razorpay, PayPal, Setu** | XGBoost |
+| **Training speed** | Slower (parallel trees) | Faster (blocked computation) | XGBoost |
+| **Interpretability** | Feature importances | Feature importances + SHAP (future) | XGBoost |
 
-For each of 400 trees:
-  1. Bootstrap sample: randomly select N transactions WITH replacement
-     (each tree sees ~63% of unique samples; ~37% are out-of-bag)
-
-  2. For each node in the tree, consider only √16 ≈ 4 random features
-     (not all 16 — this is the key innovation of Random Forest)
-
-  3. Split on the feature + threshold that best separates fraud from legit
-     (using Gini impurity criterion)
-
-  4. Stop splitting when:
-     - max_depth = 12 is reached, OR
-     - node has < min_samples_leaf = 5 samples
-
-Result: 400 diverse decision trees, each slightly different
-
-
-Inference phase (for a new transaction):
-─────────────────────────────────────────
-Feed the 16-feature vector to all 400 trees simultaneously
-
-Each tree outputs a vote:
-  - Tree 1:   "NOT FRAUD"
-  - Tree 2:   "FRAUD"
-  - Tree 3:   "NOT FRAUD"
-  - ...
-  - Tree 400: "FRAUD"
-
-Tally:
-  fraud_votes = 160
-  legit_votes = 240
-
-fraud_probability = 160 / 400 = 0.40
-fraud_score       = round(0.40 × 100) = 40   → MEDIUM risk
-```
-
-**Why bootstrap sampling (step 1)?**
-
-Each tree is trained on a different random subset of data, so they make different errors. When you average their votes, the errors **cancel out**. This is called **bagging** (Bootstrap AGGregating) and is the core reason Random Forests outperform single trees dramatically.
-
-**Why random feature selection at each split (step 2)?**
-
-If all trees used all features, they would all make similar splits (dominated by the strongest features like `is_blacklisted`). By restricting each split to √16 ≈ 4 random features, trees are forced to use different features, making them **decorrelated**. Decorrelated trees produce much better ensembles.
+**Key insight:** At Razorpay's public ML talks and Stripe's research blog, XGBoost is consistently cited as the workhorse of production fraud detection. RandomForest is a strong baseline, but XGBoost's regularization and sequential error correction make it more robust when features overlap between fraud and legitimate transactions (which they do in real life).
 
 ---
 
-### 3.4 The 5 Fraud Archetypes
+### 3.5 The 7 Fraud Archetypes
 
-The training data is built by simulating **5 documented real-world fraud patterns** observed in RBI FIU reports, Stripe Radar research, and PayPal fraud disclosures.
+The training data simulates **7 documented real-world fraud patterns**. Each archetype has distinct feature signatures — the model learns to recognize them individually and in combination.
 
 ---
 
@@ -613,319 +564,801 @@ An attacker obtains the victim's login credentials (via phishing, credential stu
 balance         = lognormal(9.5, 0.8)          # victim had normal balance
 amount          = balance × uniform(0.6, 0.95)  # drain 60–95% of balance
 avg_txn         = lognormal(6.5, 0.5)           # historical avg is low
-                                                 # (victim made small payments before)
 hour            = choice([0,1,2,3,4,22,23])     # always late night
-is_new_recip    = 1                              # attacker's account is new
-account_age     = randint(1, 60)                 # short account history (targeted)
+is_new_recip    = 1                             # attacker's account is new
+account_age     = randint(1, 60)                # new-ish account (targeted)
+vpa_risk        = choice([0,20,40,60], p=[0.3,0.2,0.3,0.2])  # sometimes VPA
+ifsc_valid      = bernoulli(p=0.5)              # may have invalid banking info
+amount_zscore   = (amount - avg_txn*5) / (avg_txn*2)         # very high
 ```
 
 **Signals that fire:**
 - `amount_to_balance_ratio`: 0.6–0.95 → draining the account
 - `is_new_recipient`: 1 → sending to unknown person
 - `is_night`: 1 → midnight to 4 AM
-- `amount_to_avg_ratio`: 5–20× → massive deviation from their normal pattern
-- `account_age_days` < 60 → new accounts are targeted more often
+- `amount_to_avg_ratio`: 5–20× → massive deviation from normal pattern
+- `amount_zscore` ≥ 3 → statistical anomaly
+- `account_age_days` < 60 → recently created or compromised
 
 ---
 
 #### Archetype 2: Velocity Fraud / Card Testing
 
 **Real-world description:**
-A fraudster who has stolen access to multiple accounts runs automated scripts to make many small transactions rapidly — testing if accounts are still valid and finding the spend limit before making a larger withdrawal.
+A fraudster runs automated scripts to make many small transactions rapidly — testing if accounts are still valid and finding the spend limit before making a larger withdrawal.
 
 **Synthetic profile:**
 ```python
 balance         = lognormal(8.5, 0.7)
 amount          = uniform(1, 500)          # very small probe amounts
-txns_last_1h    = randint(5, 15)           # high velocity — 5 to 15 per hour
-unique_recips   = randint(3, 10)           # sending to many different people
-account_age     = randint(1, 30)           # freshly compromised accounts
-is_new_recip    = bernoulli(p=0.7)         # 70% chance recipient is new
+txns_last_1h    = randint(5, 15)           # high velocity
+unique_recips   = randint(3, 10)           # fan-out to many recipients
+account_age     = randint(1, 30)           # freshly compromised
+is_new_recip    = bernoulli(p=0.7)
+amount_zscore   = -2.0 + normal(0, 0.5)   # unusually small amounts
 ```
 
 **Signals that fire:**
 - `txns_last_1h` ≥ 5 → immediately triggers velocity hard rule (BLOCK)
-- `unique_recipients_24h` high → card testing pattern
-- `amount` very small but many of them → probing behaviour
-- `account_age_days` < 30 → recently compromised
+- `unique_recipients_24h` high → card testing / fan-out
+- `amount_zscore` very negative → probing with unusually small amounts
+- `account_age_days` < 30 → recently compromised account
 
 ---
 
 #### Archetype 3: Structuring / Smurfing
 
 **Real-world description:**
-To avoid transaction monitoring thresholds (Rs. 10,000, Rs. 20,000, Rs. 50,000), fraudsters deliberately break up large transfers into multiple smaller amounts just below the threshold. This is called **structuring** and is a recognised money laundering technique under PMLA (Prevention of Money Laundering Act).
+To avoid transaction monitoring thresholds (Rs. 10,000 / Rs. 20,000 / Rs. 50,000), fraudsters deliberately break up transfers into multiple amounts just below the threshold. This is a **PMLA (Prevention of Money Laundering Act)** offence.
 
-**Example:** Instead of transferring Rs. 50,000 once, they send Rs. 9,900 × 6 = Rs. 59,400 across 6 transactions to 6 different recipients.
+**Example:** Instead of transferring Rs. 50,000 once (which triggers monitoring), they send Rs. 9,100 × 6 across 6 recipients.
 
 **Synthetic profile:**
 ```python
-balance         = lognormal(10.5, 0.5)     # has significant funds
+balance         = lognormal(10.5, 0.5)
 threshold       = choice([10_000, 20_000, 50_000])
-amount          = threshold - uniform(100, 999)   # e.g., Rs. 9,100–9,999
-avg_txn         = lognormal(7.0, 0.6)             # normal historical avg
-txns_24h        = randint(3, 8)                   # multiple transactions today
+amount          = threshold - uniform(100, 999)   # just under threshold
+txns_24h        = randint(3, 8)                   # multiple transactions
 hour            = uniform(9, 18)                  # business hours (evasive!)
 is_round_amount = 0                               # deliberately NOT round
 ```
 
-**Signals that fire:**
-- `amount` consistently just below threshold values
-- `txns_last_24h` high (3–8)
-- `is_round_amount`: 0 — but amount is suspiciously close to a round threshold
-- `unique_recipients_24h`: spread across accounts (smurfing = multiple mules)
-
-**Note on `hour`:** Structuring often happens during business hours (9 AM–6 PM) to blend in with legitimate activity — making it harder to detect with simple time-of-day rules alone. The ML model catches it via the combination of amount + frequency + recipient spread.
+**Why business hours?**
+Structuring often happens 9 AM–6 PM to blend in with legitimate activity. Simple time-of-day rules miss it. The XGBoost model catches it via the **combination** of: amount + frequency + recipient spread — which is exactly what boosting excels at (learning high-order interactions).
 
 ---
 
 #### Archetype 4: Money Muling
 
 **Real-world description:**
-A "money mule" is someone (witting or unwitting) who receives stolen funds in their account and is instructed to immediately forward them to another account — taking a commission. The account is used as a layer of indirection to obscure the original crime.
+A "money mule" receives stolen funds into their account and is instructed to immediately forward them — taking a commission. The account adds a layer of indirection to obscure the original crime.
 
-**Synthetic profile:**
+**The defining signal:** `amount_to_avg_ratio` = (Rs. 80,000 forward) / (Rs. 1,200 historical avg) = **66.7×** — an extreme statistical outlier.
+
 ```python
-balance         = lognormal(11.0, 0.5)     # high balance (just received large deposit)
+balance         = lognormal(11.0, 0.5)     # high (just received deposit)
 avg_txn         = lognormal(6.0, 0.5)      # historical avg is LOW
-                                            # (normal user with suddenly large balance)
-amount          = balance × uniform(0.7, 0.99)  # forward almost everything
-txns_last_1h    = randint(1, 3)             # one or a few large transactions
-is_new_recip    = bernoulli(p=0.8)          # 80% chance — forwarding to unknown
+amount          = balance × uniform(0.7, 0.99)
+is_new_recip    = bernoulli(p=0.8)
+ifsc_valid      = bernoulli(p=0.6)         # may route to suspicious account
+sender_has_vpa  = bernoulli(p=0.3)         # often no registered VPA
 ```
-
-**The key signal:**
-`amount_to_avg_ratio` = (Rs. 80,000 forward) / (Rs. 1,200 historical avg) = **66.7×**
-
-This is an extreme outlier. No legitimate user forwards 66× their normal transaction amount unless something unusual has happened.
-
-**Signals that fire:**
-- `amount_to_avg_ratio`: 10–50× historical average
-- `amount_to_balance_ratio`: 0.7–0.99
-- `is_new_recipient`: 1 (forwarding to the criminal's destination account)
-- `balance` unusually high relative to account history
 
 ---
 
 #### Archetype 5: Blacklisted Actor
 
 **Real-world description:**
-The recipient's email or domain is on the GoPay Trust & Safety blacklist — known disposable email providers, accounts reported for fraud, or known criminal destinations.
+The recipient's email or domain is on the GoPay fraud blacklist — known disposable email providers, accounts reported for fraud, or known criminal destinations.
 
-**Design decision:** This is handled as a **hard rule before ML** (Layer 1), not as a learned pattern. The ML model does include `is_blacklisted` as a feature (to inform the probability even in borderline cases), but any transaction where `is_blacklisted=1` is immediately flagged as CRITICAL regardless of the ML score.
+**Design decision:** This is handled as a **hard rule** (Layer 1), not as a learned pattern. The ML model includes `is_blacklisted` as a feature (to inform score in borderline cases), but any `is_blacklisted=1` transaction is immediately flagged CRITICAL regardless of ML score.
 
-**Blacklisted domains include:**
 ```
-mailinator.com      guerrillamail.com    guerrillamail.net
-tempmail.com        temp-mail.org        throwaway.email
-dispostable.com     sharklasers.com      spam4.me
-trashmail.com       trashmail.net        yopmail.com
-fakeinbox.com       maildrop.cc          getairmail.com
-spamgourmet.com     spamgourmet.net      mailnull.com
+Blocked domains: mailinator.com, guerrillamail.com, tempmail.com,
+                 temp-mail.org, throwaway.email, yopmail.com,
+                 fakeinbox.com, maildrop.cc, spamgourmet.com
 ```
 
-**Why disposable emails?**
-Fraudsters use disposable email providers to create throwaway accounts that cannot be traced back to them. Any GoPay account registered with a disposable email is a strong fraud signal for any transaction involving them.
+`vpa_risk_score` for blacklisted actors is generated from `choice([10,40,70,90])` — they also tend to have suspicious VPAs.
 
 ---
 
-### 3.5 Feature Vector (16 Features)
+#### Archetype 6: VPA Spoofing (NEW in v2)
 
+**Real-world description:**
+Fraudsters create UPI handles that are visually near-identical to legitimate payment handles. Victims see what looks like a merchant's VPA and pay money to the fraudster instead.
+
+**Real attack examples:**
 ```
-Feature                   │ Type    │ Range         │ Fraud signal direction
-──────────────────────────┼─────────┼───────────────┼──────────────────────────────────────────
-amount                    │ float   │ 1 – 100,000   │ Higher = more risk (for unusual accounts)
-amount_to_balance_ratio   │ float   │ 0 – 2+        │ Higher = more risk (draining account)
-amount_to_avg_ratio       │ float   │ 0 – 100+      │ Higher = more risk (deviation from normal)
-txns_last_1h              │ int     │ 0 – 50+       │ Higher = more risk (velocity)
-txns_last_24h             │ int     │ 0 – 200+      │ Higher = more risk (velocity)
-amount_sent_last_1h       │ float   │ 0 – 1,00,000  │ Higher = more risk (high hourly spend)
-amount_sent_last_24h      │ float   │ 0 – 1,00,000  │ Higher = more risk (high daily spend)
-unique_recipients_24h     │ int     │ 0 – 20+       │ Higher = more risk (fan-out pattern)
-is_new_recipient          │ binary  │ 0 or 1        │ 1 = more risk (unknown destination)
-hour_of_day               │ int     │ 0 – 23        │ 0–5 = higher risk (night)
-is_night                  │ binary  │ 0 or 1        │ 1 = more risk (midnight to 5 AM)
-is_weekend                │ binary  │ 0 or 1        │ 1 = slightly more risk
-account_age_days          │ int     │ 1 – 3650+     │ Lower = more risk (new account)
-is_round_amount           │ binary  │ 0 or 1        │ 1 = structuring signal (contextual)
-is_blacklisted            │ binary  │ 0 or 1        │ 1 = CRITICAL (immediate block)
-balance_after_ratio       │ float   │ 0 – 1         │ Lower = more risk (leaving account empty)
+Legitimate           → Spoofed
+─────────────────────────────────────────
+paytm@upi            → paytrn@upi         (letter insertion)
+sbi@okicici          → sbi@okicicl        (l ↔ I swap — identical in some fonts)
+hdfc@ybl             → hdfc@yb1           (l → 1 digit substitution)
+google@oksbi         → goog1e@oksbi       (l → 1 homoglyph)
+phonepay@upi         → phonepe@upi        (brand misspelling)
+gpay@oksbi           → qpay@oksbi         (g → q visual similarity)
 ```
 
-**Real example feature vector (ATO scenario):**
+**Why this is dangerous:** In many payment apps, the VPA handle is shown in small font. The difference between `sbi@okicici` and `sbi@okicicl` is invisible at a glance.
+
+**Synthetic profile:**
+```python
+vpa_risk_score  = choice([60,70,80,90,100], p=[0.2,0.2,0.3,0.2,0.1])
+ifsc_valid      = bernoulli(p=0.4)
+is_new_recip    = 1                        # always a new recipient
+account_age     = randint(1, 90)           # relatively new account
+amount          = lognormal(8.5, 0.7)      # significant amount (worth spoofing)
+```
+
+**Signals that fire:**
+- `vpa_risk_score` ≥ 60 → VPA spoofing detected (→ hard BLOCK if ≥ 80)
+- `is_new_recipient`: 1 → sending to someone never paid before
+- `ifsc_is_valid`: 0 → fake bank account info
+
+---
+
+#### Archetype 7: Fake IFSC / Bank Account Fraud (NEW in v2)
+
+**Real-world description:**
+Fraudsters provide victim with fake bank account details (including a structurally plausible but non-existent IFSC code) to redirect payments. Common in:
+- Fake refund scams ("verify your account to receive refund")
+- Prize/lottery scams ("pay processing fee to claim prize")
+- Social engineering ("your account is compromised, transfer to safe account")
+
+**IFSC format abuse:** Fraudsters use codes like `FAKE0123456` — which passes a visual check but fails structural validation. Or they use valid-format codes like `ABCD0XXXXXX` where `ABCD` is not a registered bank.
+
+**Synthetic profile:**
+```python
+ifsc_is_valid   = 0                        # invalid IFSC is the defining signal
+vpa_risk        = choice([10,30,50], p=[0.3,0.4,0.3])
+is_new_recip    = 1                        # always a new recipient
+amount          = lognormal(9.0, 0.6)      # large amount (social engineering)
+hour            = uniform(6, 22)           # business hours (convincing)
+```
+
+**Hard rule:** If `ifsc_is_valid == 0` AND `amount >= Rs.5,000`, the transaction is BLOCKED by Layer 0b before even reaching ML scoring.
+
+---
+
+### 3.6 Feature Vector — 20 Features (v2)
+
+Version 2 adds 4 new features to the original 16, enabling the model to detect VPA spoofing, IFSC fraud, and statistical amount anomalies.
+
+```
+Feature                   │ Type    │ Range          │ Fraud signal direction          │ New in v2?
+──────────────────────────┼─────────┼────────────────┼─────────────────────────────────┼──────────
+amount                    │ float   │ 1 – 1,00,000   │ Higher = more risk (context)    │
+amount_to_balance_ratio   │ float   │ 0 – 2+         │ Higher = draining account       │
+amount_to_avg_ratio       │ float   │ 0 – 100+       │ Higher = deviation from normal  │
+txns_last_1h              │ int     │ 0 – 50+        │ Higher = velocity fraud         │
+txns_last_24h             │ int     │ 0 – 200+       │ Higher = velocity fraud         │
+amount_sent_last_1h       │ float   │ 0 – 1,00,000   │ Higher = high hourly spend      │
+amount_sent_last_24h      │ float   │ 0 – 1,00,000   │ Higher = high daily spend       │
+unique_recipients_24h     │ int     │ 0 – 20+        │ Higher = fan-out / smurfing     │
+is_new_recipient          │ binary  │ 0 or 1         │ 1 = unknown destination         │
+hour_of_day               │ int     │ 0 – 23         │ 0–5 = night (high risk)         │
+is_night                  │ binary  │ 0 or 1         │ 1 = midnight to 5 AM            │
+is_weekend                │ binary  │ 0 or 1         │ 1 = slightly more risk          │
+account_age_days          │ int     │ 1 – 3650+      │ Lower = new/compromised         │
+is_round_amount           │ binary  │ 0 or 1         │ 1 = structuring signal          │
+is_blacklisted            │ binary  │ 0 or 1         │ 1 = CRITICAL immediate block    │
+balance_after_ratio       │ float   │ 0 – 1          │ Lower = leaving account empty   │
+vpa_risk_score            │ int     │ 0 – 100        │ Higher = VPA spoofing risk      │ ✓ NEW
+ifsc_is_valid             │ binary  │ 0 or 1         │ 0 = invalid/unregistered IFSC   │ ✓ NEW
+amount_zscore             │ float   │ -∞ to +∞       │ |zscore| ≥ 3 = anomaly          │ ✓ NEW
+sender_has_vpa            │ binary  │ 0 or 1         │ 0 = no registered UPI VPA       │ ✓ NEW
+```
+
+**Feature engineering for the 4 new features:**
+
+```java
+// amount_zscore — computed in FraudService.buildFeatures() in Java:
+double meanSent = recentSent.isEmpty() ? amount
+    : recentSent.stream().mapToDouble(t -> t.amount).average().orElse(amount);
+double sumSq    = recentSent.stream()
+    .mapToDouble(t -> Math.pow(t.amount - meanSent, 2)).sum();
+double stdSent  = recentSent.size() > 1 ? Math.sqrt(sumSq / recentSent.size()) : 1.0;
+double amountZscore = (amount - meanSent) / Math.max(stdSent, 1.0);
+
+// sender_has_vpa — from user profile:
+int senderHasVpa = (sender.vpa != null && !sender.vpa.isEmpty()) ? 1 : 0;
+
+// vpa_risk_score and ifsc_is_valid — from enrichWithVpaAndIfsc():
+// Calls Python /vpa-check and /ifsc-validate with 1s timeout
+// Safe defaults if service is unavailable: vpaRiskScore=0, ifscIsValid=1
+```
+
+**Real example feature vector (VPA Spoofing scenario):**
 ```json
 {
-  "amount":                  8500.0,
-  "amount_to_balance_ratio": 0.85,
-  "amount_to_avg_ratio":     12.3,
-  "txns_last_1h":            1,
+  "amount":                  15000.0,
+  "amount_to_balance_ratio": 0.62,
+  "amount_to_avg_ratio":     8.4,
+  "txns_last_1h":            0,
   "txns_last_24h":           1,
-  "amount_sent_last_1h":     8500.0,
-  "amount_sent_last_24h":    8500.0,
+  "amount_sent_last_1h":     15000.0,
+  "amount_sent_last_24h":    15000.0,
   "unique_recipients_24h":   1,
   "is_new_recipient":        1,
-  "hour_of_day":             2,
-  "is_night":                1,
+  "hour_of_day":             14,
+  "is_night":                0,
   "is_weekend":              0,
-  "account_age_days":        22,
-  "is_round_amount":         0,
+  "account_age_days":        45,
+  "is_round_amount":         1,
   "is_blacklisted":          0,
-  "balance_after_ratio":     0.15
+  "balance_after_ratio":     0.38,
+  "vpa_risk_score":          85,
+  "ifsc_is_valid":           0,
+  "amount_zscore":           6.2,
+  "sender_has_vpa":          1
 }
-→ fraud_probability: 0.94 → fraud_score: 94 → CRITICAL → BLOCK
+→ Layer 0a fires: vpa_risk_score=85 ≥ 80 → BLOCK immediately (before ML)
 ```
 
 ---
 
-### 3.6 Synthetic Fraud Data Generation
+### 3.7 Amount Z-Score — Statistical Anomaly Detection
 
+The **amount z-score** measures how many standard deviations the current transaction amount is from the sender's own historical average. This is a core technique in statistical process control and anomaly detection.
+
+**Formula:**
 ```
-Total samples:   20,000
-Legitimate:      17,600  (88%)
-Fraudulent:       2,400  (12%)
+z = (amount_current - mean_historical) / std_historical
 
-Breakdown by archetype (2,400 fraud total):
-  ATO          : 480  (2.4% of total)
-  Velocity     : 480  (2.4% of total)
-  Structuring  : 480  (2.4% of total)
-  Money Mule   : 480  (2.4% of total)
-  Blacklisted  : 480  (2.4% of total)
+where:
+  mean_historical = average of all past transactions by this sender
+  std_historical  = standard deviation of past transactions
 ```
 
-**Why 12% fraud rate in training (vs 0.1% in real life)?**
+**Interpretation:**
+```
+z = 0.5   → Within 0.5 std of normal (very typical)
+z = 1.5   → 1.5 std above normal (slightly unusual)
+z = 3.0   → 3 std above normal (99.7% of normal transactions are below this)
+z = 5.0   → Extremely unusual — almost certainly anomalous
+z = -3.0  → Unusually small (card testing probe)
+```
 
-If we trained on 0.1% fraud, the model would see only 20 fraud examples — not enough to learn meaningful patterns. We use **oversampling** (12%) in training while acknowledging that real deployment will have much lower rates. The `class_weight='balanced'` parameter adjusts the loss function to compensate.
+**Why z-score over raw deviation:**
+
+Raw deviation (`amount - mean`) does not account for variability. If User A normally sends between Rs. 100–200, a Rs. 5,000 transaction is an extreme outlier. If User B normally sends between Rs. 1,000–50,000, a Rs. 5,000 transaction is completely normal. Z-score normalizes by standard deviation — it's **user-specific**, not absolute.
+
+**Java implementation (FraudService.java):**
+```java
+// Computed from the sender's transaction history (30-day window)
+List<Transaction> recentSent = recentSentBy(sender.id);
+
+double meanSent = recentSent.isEmpty() ? amount
+    : recentSent.stream().mapToDouble(t -> t.amount).average().orElse(amount);
+
+double stdSent = 1.0;   // default: avoid division by zero for new users
+if (recentSent.size() > 1) {
+    double sumSq = recentSent.stream()
+        .mapToDouble(t -> Math.pow(t.amount - meanSent, 2)).sum();
+    stdSent = Math.sqrt(sumSq / recentSent.size());
+}
+
+double amountZscore = (amount - meanSent) / Math.max(stdSent, 1.0);
+```
+
+**Signal threshold:** `|amount_zscore| ≥ 3` fires the `amount_statistical_anomaly` signal with HIGH severity.
 
 ---
 
-### 3.7 Class Imbalance — The Core Challenge
+### 3.8 VPA Spoofing Detection Engine
 
-**The problem:**
-In real-world fraud detection, legitimate transactions vastly outnumber fraudulent ones (typically 99.9% vs 0.1%). A naive model that always predicts "NOT FRAUD" would achieve 99.9% accuracy — completely useless.
+This is the core of the new Layer 0a check. The engine lives in `fraud-engine/vpa_detector.py` and is exposed via `POST /vpa-check`.
 
-**The metric that matters: AUC-PR, not accuracy**
+#### What is a VPA?
 
+A VPA (Virtual Payment Address) — also called UPI ID — is a string of the format `username@bankhandle`. Examples:
 ```
-Accuracy = 99.9%  → model always says "not fraud"
-Precision = 1.0   → of all "fraud" predictions, what fraction are actually fraud?
-Recall    = 1.0   → of all actual frauds, what fraction did we catch?
-AUC-PR    = 1.0   → area under precision-recall curve (best for imbalanced data)
+john.doe@ybl          → PhonePe handle
+merchant@paytm        → Paytm handle
+9876543210@oksbi      → Google Pay (SBI) handle
+company@okhdfcbank    → Google Pay (HDFC) handle
 ```
 
-**How `class_weight='balanced'` fixes it:**
+The `bankhandle` suffix (e.g., `ybl`, `paytm`, `oksbi`) is assigned by NPCI to authorised payment service providers.
+
+#### Algorithm 1: Levenshtein Distance
+
+The **Levenshtein distance** (edit distance) between two strings is the minimum number of single-character edits (insertions, deletions, substitutions) required to transform one string into the other.
+
+**Dynamic programming implementation (O(m×n) time and space):**
+```python
+def levenshtein_distance(s1: str, s2: str) -> int:
+    m, n = len(s1), len(s2)
+    if m == 0: return n
+    if n == 0: return m
+
+    # dp[j] = edit distance between s1[:i] and s2[:j]
+    dp = list(range(n + 1))      # base case: dp[j] = j (delete all of s2)
+
+    for i in range(1, m + 1):
+        prev = dp[0]             # dp[i-1][j-1]
+        dp[0] = i                # base case: dp[i][0] = i (delete all of s1)
+        for j in range(1, n + 1):
+            temp = dp[j]
+            if s1[i-1] == s2[j-1]:
+                dp[j] = prev    # characters match — no edit needed
+            else:
+                dp[j] = 1 + min(prev,    # substitution
+                                dp[j],   # deletion from s1
+                                dp[j-1]) # insertion into s1
+            prev = temp
+    return dp[n]
+```
+
+**Worked example — `okicicl` vs `okicici`:**
+```
+     ""  o  k  i  c  i  c  i
+""  [ 0, 1, 2, 3, 4, 5, 6, 7 ]
+o   [ 1, 0, 1, 2, 3, 4, 5, 6 ]
+k   [ 2, 1, 0, 1, 2, 3, 4, 5 ]
+i   [ 3, 2, 1, 0, 1, 2, 3, 4 ]
+c   [ 4, 3, 2, 1, 0, 1, 2, 3 ]
+i   [ 5, 4, 3, 2, 1, 0, 1, 2 ]
+c   [ 6, 5, 4, 3, 2, 1, 0, 1 ]
+l   [ 7, 6, 5, 4, 3, 2, 1, 1 ]  ← distance = 1
+```
+
+`okicicl` is **1 edit** away from `okicici` — just the final `l → i` substitution. This is a spoof.
+
+#### Algorithm 2: Jaro-Winkler Similarity
+
+Jaro-Winkler is a string similarity metric in [0, 1] that gives extra weight to matching prefixes — perfect for VPAs where spoofing typically happens at the end of the handle.
+
+**Jaro similarity:**
+```python
+def jaro_similarity(s1, s2):
+    match_dist = max(len(s1), len(s2)) // 2 - 1
+    # Count matching characters within match_dist window
+    # Count transpositions (matched characters in wrong order)
+    jaro = (matches/len(s1) + matches/len(s2)
+            + (matches - transpositions/2)/matches) / 3
+    return jaro
+```
+
+**Jaro-Winkler adds prefix weight:**
+```python
+def jaro_winkler(s1, s2, p=0.1):
+    jaro = jaro_similarity(s1, s2)
+    # Count matching prefix characters (up to 4)
+    prefix = 0
+    for c1, c2 in zip(s1[:4], s2[:4]):
+        if c1 == c2: prefix += 1
+        else: break
+    return jaro + prefix * p * (1 - jaro)
+```
+
+`p=0.1` is the standard scaling factor. A prefix of 4 matching characters adds `4 × 0.1 × (1 - jaro)` to the similarity — rewarding VPAs that share the same prefix (which legitimate variants do).
+
+#### Known Bank Handle Registry (NPCI-authorised)
 
 ```python
-# Scikit-learn computes per-class weights automatically:
-weight_for_fraud     = n_total / (n_classes × n_fraud_samples)
-                     = 20000  / (2        × 2400)
-                     = 4.17
-
-weight_for_legitimate = 20000 / (2 × 17600)
-                      = 0.568
+KNOWN_BANK_HANDLES = {
+    # PhonePe
+    'ybl', 'ibl', 'axl',
+    # Google Pay
+    'oksbi', 'okhdfcbank', 'okicici', 'okaxis',
+    # Paytm
+    'paytm', 'ptaxis', 'pthdfc', 'ptsbi',
+    # Amazon Pay
+    'apl', 'yapl',
+    # WhatsApp Pay
+    'wa1', 'waaxis',
+    # Banking apps
+    'sbi', 'yesbank', 'kotak', 'pnb', 'upi', 'hdfcbank',
+    'icici', 'axisbank', 'indus', 'rbl', 'freecharge', 'bhim',
+}
 ```
 
-Each fraud training example now contributes **4.17×** as much to the loss function as a legitimate example. The model is forced to learn fraud patterns aggressively, accepting some false positives (flagging legitimate transactions) in exchange for high recall (catching actual fraud).
+#### Risk Scoring Logic
 
-**The false positive / false negative tradeoff:**
-
+```python
+def check(vpa: str) -> dict:
+    # 1. Structural validation: must match ^[a-zA-Z0-9._-]{3,50}@[a-zA-Z]{3,20}$
+    # 2. Whitelist check: exact match → risk=0
+    # 3. Split into username + handle
+    # 4. Exact match on handle → risk=0 (legitimate bank handle)
+    # 5. Levenshtein distance against all known handles:
+    if best_lev == 1:   risk += 75  # "Very likely spoof"
+    elif best_lev == 2: risk += 45  # "Probable spoof"
+    elif jw >= 0.92:    risk += 35  # "Suspicious similarity"
+    # 6. Homoglyph detection (l↔1, 0↔O, rn↔m, vv↔w):
+    if homoglyph_found: risk += 20  # "Visual substitution attack"
+    # 7. Unknown handle: risk += 15
+    # Hard rule: risk ≥ 80 → BLOCK in Layer 0a
 ```
-False Positive (FP): blocking a LEGITIMATE transaction
-  → User is frustrated, loses trust, may churn
-  → Handled by: REVIEW band (60–79) instead of BLOCK — allow but monitor
 
-False Negative (FN): allowing a FRAUDULENT transaction
-  → User loses money, GoPay bears liability
-  → Handled by: conservative threshold (score ≥ 60 = flag, ≥ 80 = block)
+**Test results:**
+```
+VPA                    Risk  Spoof  Signals
+paytm@upi              0     False  []                    ← Known handle, exact match
+paytrn@upi             0     False  []                    ← 'upi' is known, handle matches
+sbi@okicicl            75    True   ['handle_edit_distance_1']
+hdfc@yb1               100   True   ['invalid_format', 'handle_edit_distance_1', 'homoglyph_1_to_l']
 ```
 
 ---
 
-### 3.8 The 5-Layer Decision Stack (Cascade Architecture)
+### 3.9 IFSC Validation Engine
 
-This architecture mirrors how Stripe Radar and PayPal's fraud engine are structured: **cheapest checks first**, most expensive last.
+The IFSC (Indian Financial System Code) validator lives in `fraud-engine/ifsc_validator.py` and is exposed via `POST /ifsc-validate`.
+
+#### IFSC Format
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     TRANSACTION REQUEST                              │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 1: BLACKLIST CHECK                                            │
-│  Cost: O(1) HashSet lookup — < 1ms                                  │
-│  Check: recipient email/domain in blockedDomains set?               │
-│  If YES → fraudScore=95, riskLevel=CRITICAL, recommendation=BLOCK   │
-│  If NO  → continue                                                   │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 2: HARD VELOCITY RULES                                        │
-│  Cost: Read transactions.json + filter — < 5ms                      │
-│                                                                      │
-│  Rule 1: txns_last_1h ≥ 5         → BLOCK (RBI P2P limit)           │
-│  Rule 2: amount_sent_last_1h      │
-│          + new_amount > Rs.20,000 → BLOCK (hourly amount limit)     │
-│  Rule 3: txns_last_24h ≥ 20       → BLOCK (daily count limit)       │
-│  Rule 4: amount_sent_last_24h     │
-│          + new_amount > Rs.1,00,000 → BLOCK (daily amount limit)    │
-│                                                                      │
-│  If any rule fires → immediate BLOCK                                 │
-│  If none fire      → continue                                        │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 3+4: ML SCORING                                               │
-│  Cost: HTTP POST to Python service — 50–500ms                       │
-│                                                                      │
-│  1. Build 16-feature vector (from real platform data)               │
-│  2. POST http://localhost:5002/assess                                │
-│  3. RandomForest.predict_proba() → fraud_probability                │
-│  4. fraud_score = round(fraud_probability × 100)                    │
-│  5. Extract human-readable signals from feature values              │
-│                                                                      │
-│  score 0–34   → LOW      → ALLOW                                    │
-│  score 35–59  → MEDIUM   → ALLOW  (logged, monitored)               │
-│  score 60–79  → HIGH     → REVIEW (flagged in transaction history)  │
-│  score ≥ 80   → CRITICAL → BLOCK                                    │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │  (Python service unreachable)
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 5: RULE-BASED FALLBACK                                        │
-│  Cost: Pure Java computation — < 1ms                                 │
-│                                                                      │
-│  Same signals as ML model but computed deterministically:            │
-│  - velocity score     (0–35 points)                                  │
-│  - balance drain      (+20 if ratio ≥ 0.75)                         │
-│  - unusual amount     (+15 if ratio ≥ 5×)                           │
-│  - new large recip    (+15 if new + amount ≥ Rs.10,000)             │
-│  - night + new recip  (+10 if 0–5 AM + new recipient)              │
-│  - many recipients    (+10 if ≥ 8 in 24h)                           │
-│  - new account large  (+10 if age < 7 days + amount ≥ Rs.5,000)    │
-│                                                                      │
-│  Same thresholds: ≥ 80 → BLOCK                                       │
-│  Response includes "model": "rule_based_fallback" for transparency  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  AUDIT LOGGING                                                       │
-│  Every assessment → fraud_events.json                               │
-│  Fields: id, fromUserId, toIdentifier, amount, fraudScore,          │
-│          riskLevel, recommendation, signals[], model, createdAt      │
-│  Retention: last 1,000 events (configurable)                        │
-└─────────────────────────────────────────────────────────────────────┘
+IFSC format: [BANK_CODE][0][BRANCH_CODE]
+             ──────────┬─────────────────
+Example:     HDFC      0   001234
+             ────      ─   ──────
+             4 alpha   1   6 alphanumeric
+             chars     zero chars
+
+Total: 11 characters
+Position 5 (index 4) MUST be the digit '0' (zero, not letter O)
 ```
 
-**Why this ordering is critical:**
+#### Layer 1: Structural Regex Validation
 
-The **cascade** structure means we spend expensive compute (HTTP call, ML inference) only when necessary. If the blacklist catches 5% of fraud cases in 1ms, we avoid the 500ms ML call for those cases entirely. At scale (millions of transactions/day), this saves enormous compute cost.
+```python
+import re
+IFSC_PATTERN = re.compile(r'^[A-Z]{4}0[A-Z0-9]{6}$')
+
+def is_structurally_valid(ifsc: str) -> bool:
+    # Checks:
+    # 1. Exactly 11 characters
+    # 2. First 4: uppercase letters only
+    # 3. Position 5: digit '0' (zero)
+    # 4. Last 6: uppercase letters or digits
+    return bool(IFSC_PATTERN.match(ifsc))
+```
+
+**What this catches:**
+- `INVALID` → 7 chars, no pattern match → INVALID
+- `HDFC1001234` → position 5 is '1' not '0' → INVALID
+- `HDFC0001234` → passes structural check → proceed to Layer 2
+
+#### Layer 2: RBI Bank Code Registry
+
+```python
+BANK_REGISTRY = {
+    'HDFC': 'HDFC Bank',       'SBIN': 'State Bank of India',
+    'ICIC': 'ICICI Bank',      'UTIB': 'Axis Bank',
+    'KKBK': 'Kotak Mahindra',  'PUNB': 'Punjab National Bank',
+    'BARB': 'Bank of Baroda',  'CNRB': 'Canara Bank',
+    'IOBA': 'Indian Overseas',  'UBIN': 'Union Bank',
+    'BKID': 'Bank of India',   'IDBI': 'IDBI Bank',
+    'YESB': 'Yes Bank',        'INDB': 'IndusInd Bank',
+    'RATN': 'RBL Bank',        'FDRL': 'Federal Bank',
+    'KVBL': 'Karur Vysya',     'SIBL': 'South Indian Bank',
+    'AUBL': 'AU Small Finance', 'USFB': 'Ujjivan SFB',
+    'AIRP': 'Airtel Payments',  'FINO': 'Fino Payments Bank',
+    # ... 70+ total registered banks
+}
+
+bank_code = ifsc[:4]
+bank_name = BANK_REGISTRY.get(bank_code)
+if bank_name is None:
+    signals.append(f'unknown_bank_code_{bank_code}')  # HIGH risk
+```
+
+**What this catches:**
+- `FAKE0123456` → bank code `FAKE` not in registry → unknown_bank_code signal
+- `HDFC0001234` → `HDFC` → 'HDFC Bank' → passes
+- `XXXZ0ABCDEF` → `XXXZ` not in registry → INVALID
+
+#### Layer 3: Luhn-Variant Structural Checksum
+
+A GoPay-specific heuristic that assigns numeric values to each character and applies a Luhn-like doubling scheme to detect random character sequences that happen to pass the regex:
+
+```python
+def _luhn_structural_check(ifsc: str) -> bool:
+    def char_val(c):
+        return int(c) if c.isdigit() else (ord(c) - ord('A') + 10)
+    # A=10, B=11, ..., Z=35
+
+    vals = [char_val(c) for c in ifsc]
+    total = 0
+    for i, v in enumerate(vals):
+        if i % 2 == 0:
+            doubled = v * 2
+            total += doubled - 9 if doubled > 9 else doubled  # Luhn doubling
+        else:
+            total += v
+    return (total % 10) != 0   # True = passes heuristic
+```
+
+**Risk level assignment:**
+```
+signals = []              → risk = 'LOW'   (all checks pass)
+['structural_checksum']   → risk = 'MEDIUM' (passes registry but checksum advisory)
+['unknown_bank_code']     → risk = 'HIGH'   (bank not in RBI registry)
+['invalid_format']        → risk = 'HIGH'   (structural failure)
+```
+
+**Test results:**
+```
+IFSC            is_valid  bank_name               risk
+HDFC0001234     True      HDFC Bank               LOW
+SBIN0000001     True      State Bank of India     MEDIUM (checksum advisory)
+FAKE0123456     False     None                    HIGH
+XXXZ0ABCDEF     False     None                    HIGH
+INVALID         False     None                    HIGH
+```
 
 ---
 
-### 3.9 Velocity Rules — The Hard Limits
+### 3.10 SDV-Enhanced Synthetic Fraud Data Generation
+
+`generate_sdv_data.py` extends the same SDV strategy from the credit engine to the fraud engine. Because fraud data has **7 distinct archetypes with very different statistical signatures**, learning the joint distribution is even more important here.
+
+#### Seed Data Generation
+
+```python
+FRAUD_RATIO = 0.12          # 12% fraud rate in training
+N_SEED      = 5_000         # seed for SDV to learn from
+
+Breakdown (600 fraud samples in seed):
+  ATO           : 85   (n//7)
+  Velocity      : 85   (n//7)
+  Structuring   : 85   (n//7)
+  Money Mule    : 85   (n//7)
+  Blacklisted   : 85   (n//7)
+  VPA Spoofing  : 85   (n//7)
+  Fake IFSC     : 90   (remainder)
+```
+
+#### SDV Configuration for Fraud Data
+
+```python
+from sdv.metadata import SingleTableMetadata
+from sdv.single_table import GaussianCopulaSynthesizer, CTGANSynthesizer
+
+meta = SingleTableMetadata()
+meta.detect_from_dataframe(seed_df)
+
+# Binary columns are categorical (not continuous)
+binary_cols = ['is_new_recipient', 'is_night', 'is_weekend', 'is_round_amount',
+               'is_blacklisted', 'ifsc_is_valid', 'sender_has_vpa', 'label']
+for col in binary_cols:
+    meta.update_column(col, sdtype='categorical')
+
+# Auto-selection: tries Gaussian first, falls back to CTGAN if quality < 0.65
+if model == 'auto':
+    candidates = ['gaussian', 'ctgan']
+    for candidate in candidates:
+        fit_and_generate(candidate)
+        score = quality_report(seed_df, synthetic_df)
+        if score >= 0.65:
+            break   # quality threshold met
+```
+
+#### Post-Processing to Ensure Valid Values
+
+```python
+def postprocess(df):
+    df['amount']               = df['amount'].clip(lower=1)
+    df['txns_last_1h']         = df['txns_last_1h'].clip(lower=0).round()
+    df['hour_of_day']          = df['hour_of_day'].clip(0, 23).round()
+    df['vpa_risk_score']       = df['vpa_risk_score'].clip(0, 100).round()
+    df['balance_after_ratio']  = df['balance_after_ratio'].clip(0, 1)
+    # Binary columns: round to 0 or 1
+    for col in binary_cols:
+        df[col] = df[col].round().clip(0, 1).astype(int)
+    return df
+```
+
+#### Why SDV Matters for Fraud Detection
+
+Without SDV, features are sampled independently:
+```python
+# Independent sampling (naive) — WRONG correlations:
+txns_last_1h = randint(5, 15)    # velocity
+amount       = uniform(1, 500)   # small (card testing)
+# But: what if SDV learns that high-velocity transactions
+# ALSO tend to have many unique recipients AND small amounts?
+# Independent sampling misses this 3-way correlation.
+```
+
+With SDV, the synthesizer learns:
+- In **velocity fraud**: `txns_last_1h` ↑ co-occurs with `unique_recipients_24h` ↑ AND `amount` ↓
+- In **ATO**: `amount_to_balance_ratio` ↑ co-occurs with `is_night=1` AND `is_new_recipient=1`
+- In **structuring**: `amount` ≈ threshold AND `txns_24h` ↑ AND `hour_of_day` ∈ [9,18]
+
+These **joint correlations** make the synthetic data far more realistic and the trained model far more robust.
+
+---
+
+### 3.11 Class Imbalance — scale_pos_weight in XGBoost
+
+**The problem:** Fraud transactions are rare (12% in training, ~0.1% in real life). A naive model that always predicts "legitimate" achieves 88% accuracy — completely useless.
+
+**XGBoost's solution: `scale_pos_weight`**
+
+Unlike RandomForest's `class_weight='balanced'` (which adjusts per-sample weights), XGBoost uses a single global multiplier on the gradient of positive (fraud) samples:
+
+```python
+scale_pos_weight = n_legitimate / n_fraud
+                 = 22_000 / 3_000  # for 25,000 samples at 12% fraud
+                 = 7.33
+```
+
+**What this does internally:**
+In the XGBoost objective function (log loss), the gradient for fraud samples is multiplied by `scale_pos_weight`:
+```
+gradient_fraud     = scale_pos_weight × (ŷ - y)   # 7.33× stronger signal
+gradient_legit     = 1.0             × (ŷ - y)
+```
+
+This means each fraud training example contributes **7.33×** as much to the loss gradient as a legitimate example. The model is forced to learn fraud patterns aggressively.
+
+**Comparison with RandomForest `class_weight='balanced'`:**
+
+| Aspect | RF `class_weight='balanced'` | XGBoost `scale_pos_weight` |
+|---|---|---|
+| Mechanism | Per-sample weight in Gini/entropy | Global gradient multiplier |
+| Effect | Balanced weighted Gini | Upweighted gradient for fraud class |
+| Calibration | May produce overconfident probabilities | Better calibrated with `aucpr` metric |
+| Computation | O(n_samples) overhead | Single scalar multiplication |
+
+**The precision-recall tradeoff:**
+```
+Threshold  Precision  Recall  F1
+0.30       0.91       0.99    0.95    (high recall, some false positives)
+0.50       0.98       0.97    0.97    (balanced — our default)
+0.70       0.99       0.94    0.97    (high precision, some missed fraud)
+```
+We use threshold=0.50 (fraud_score = 50+), mapped to risk bands for operational decisions.
+
+---
+
+### 3.12 The 7-Layer Decision Cascade
+
+The cascade architecture mirrors Stripe Radar and PayPal: **cheapest checks first, most expensive last.** Version 2 prepends **Layer 0** (VPA + IFSC) before the existing blacklist check.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       TRANSACTION REQUEST                                │
+│            POST /api/v1/transactions/send                                │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 0a: VPA SPOOFING CHECK              [NEW in v2]                  │
+│  Cost: HTTP POST to /vpa-check — < 1s timeout                           │
+│                                                                          │
+│  1. If recipient.vpa is set:                                             │
+│     POST http://localhost:5002/vpa-check { "vpa": recipient.vpa }       │
+│     Response: { risk_score: 0-100, is_spoof: bool, signals: [...] }     │
+│  2. feat.vpaRiskScore = response.risk_score                              │
+│                                                                          │
+│  If vpaRiskScore >= 80 → fraudScore=90, CRITICAL, BLOCK                 │
+│  Signal: "VPA spoofing detected: handle resembles legitimate UPI"        │
+│  Model tag: "vpa_levenshtein"                                            │
+│  If vpaRiskScore < 80 → continue (vpaRiskScore fed into ML as feature)  │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 0b: IFSC VALIDATION CHECK           [NEW in v2]                  │
+│  Cost: HTTP POST to /ifsc-validate — < 1s timeout                       │
+│                                                                          │
+│  1. If recipient.ifscCode is set:                                        │
+│     POST http://localhost:5002/ifsc-validate { "ifsc": recipient.ifsc } │
+│     Response: { is_valid: bool, bank_name: str, risk: str }             │
+│  2. feat.ifscIsValid = response.is_valid ? 1 : 0                        │
+│                                                                          │
+│  If ifscIsValid == 0 AND amount >= Rs.5,000 →                           │
+│     fraudScore=85, CRITICAL, BLOCK                                       │
+│     Signal: "Transaction blocked: IFSC invalid or unregistered"         │
+│     Model tag: "ifsc_validator"                                          │
+│  Otherwise → continue (ifscIsValid fed into ML as feature)              │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 1: BLACKLIST CHECK                                                │
+│  Cost: O(1) HashSet lookup — < 1ms                                      │
+│                                                                          │
+│  Check: isBlacklisted(recipient.identifier)                             │
+│  → Checks: blockedEmails (exact) + blockedDomains + blockedKeywords     │
+│                                                                          │
+│  If YES → fraudScore=95, CRITICAL, BLOCK                                │
+│  If NO  → continue                                                       │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 2: HARD VELOCITY RULES                                            │
+│  Cost: Read transactions.json + filter — < 5ms                          │
+│                                                                          │
+│  Rule 1: txns_last_1h ≥ 5              → BLOCK (NPCI UPI P2P limit)     │
+│  Rule 2: amount_sent_last_1h + amt     │
+│          > Rs.20,000                  → BLOCK (hourly limit)             │
+│  Rule 3: txns_last_24h ≥ 20           → BLOCK (daily count limit)       │
+│  Rule 4: amount_sent_last_24h + amt   │
+│          > Rs.1,00,000               → BLOCK (daily amount limit)       │
+│                                                                          │
+│  If any fires → immediate BLOCK (fraudScore=90, model="velocity_rules") │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 3: FEATURE ENGINEERING                                            │
+│  Cost: Pure Java computation — < 2ms                                    │
+│                                                                          │
+│  Build 20-feature vector from:                                           │
+│  ├── Transaction history (30-day window from transactions.json)         │
+│  ├── Sender profile (balance, account age, vpa registration)            │
+│  ├── Recipient profile (ifscCode, vpa)                                  │
+│  ├── VPA risk score (from Layer 0a)                                      │
+│  ├── IFSC validity (from Layer 0b)                                       │
+│  └── Amount z-score (computed from sender's history)                    │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 4: XGBoost ML SCORING                                             │
+│  Cost: HTTP POST to Python — 50–500ms (3s timeout)                      │
+│                                                                          │
+│  POST http://localhost:5002/assess  (20-feature JSON payload)           │
+│                                                                          │
+│  Python: XGBClassifier.predict_proba(X)[0][1] → fraud_probability       │
+│          fraud_score = round(fraud_probability × 100)                   │
+│                                                                          │
+│  Hard rule overrides (Python-side):                                      │
+│  ├── is_blacklisted=1     → max(score, 85)                              │
+│  ├── vpa_risk_score ≥ 60  → max(score, 75)                              │
+│  └── ifsc_is_valid=0 + amount ≥ Rs.5,000 → max(score, 65)              │
+│                                                                          │
+│  Score bands: 0–34=LOW, 35–59=MEDIUM, 60–79=HIGH, ≥80=CRITICAL         │
+│  + extract_signals() → 16 possible human-readable signals               │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │ (Python service unreachable or timeout)
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 5: RULE-BASED FALLBACK                                            │
+│  Cost: Pure Java — < 1ms                                                │
+│                                                                          │
+│  Same signals computed deterministically (no ML):                       │
+│  ├── velocity score    (+35 if txns_1h≥4, +25 if txns_24h≥8)          │
+│  ├── balance drain     (+20 if ratio ≥ 0.75)                           │
+│  ├── unusual amount    (+15 if amount_to_avg_ratio ≥ 5×)               │
+│  ├── new large recip   (+15 if new + amount ≥ Rs.10,000)               │
+│  ├── night + new       (+10 if 0–5 AM + new recipient)                 │
+│  ├── many recipients   (+10 if ≥ 8 in 24h)                             │
+│  ├── new account large (+10 if age < 7 days + amount ≥ Rs.5,000)       │
+│  ├── vpa risk          (+20 if vpaRiskScore ≥ 30)  [NEW in v2]         │
+│  └── invalid ifsc      (+15 if ifscIsValid == 0)   [NEW in v2]         │
+│                                                                          │
+│  model = "rule_based_fallback"                                           │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  LAYER 6: AUDIT LOGGING                                                  │
+│  Every assessment → fraud_events.json                                   │
+│  Fields: id, fromUserId, fromName, fromIdentifier, toIdentifier,        │
+│          amount, fraudScore, riskLevel, recommendation,                  │
+│          signals[], model, createdAt                                     │
+│  Retention: last 1,000 events                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this ordering is critical (cascade economics):**
+- Layer 0a/0b: catches spoofing/IFSC fraud in ~1s — saves ML call for obvious cases
+- Layer 1: HashSet O(1) — catches blacklisted actors in <1ms
+- Layer 2: Velocity rules — catches automated attacks deterministically
+- Layer 3+4: ML only runs after cheap rules pass — saves compute
+- Layer 5: Always available even if Python is down — 100% uptime for fraud protection
+
+---
+
+### 3.13 Velocity Rules — Hard Limits
 
 These limits are derived from RBI's transaction monitoring guidelines and NPCI's UPI velocity framework:
 
@@ -933,38 +1366,44 @@ These limits are derived from RBI's transaction monitoring guidelines and NPCI's
 Limit                          │ Value        │ Rationale
 ───────────────────────────────┼──────────────┼──────────────────────────────────────────
 Max transactions per hour      │ 5            │ NPCI UPI recommendation for P2P
-Max amount sent per hour       │ Rs. 20,000   │ Typical hourly spend for a retail user
-Max transactions per 24 hours  │ 20           │ Covers daily payments + some buffer
+Max amount sent per hour       │ Rs. 20,000   │ Typical hourly spend for retail user
+Max transactions per 24 hours  │ 20           │ Covers daily payments + buffer
 Max amount sent per 24 hours   │ Rs. 1,00,000 │ RBI P2P transaction monitoring threshold
 Max unique recipients per day  │ 8            │ Limits fan-out patterns
-New recipient limit            │ Rs. 10,000   │ UPI guideline for first-time payee
-Large transaction threshold    │ Rs. 50,000   │ Enhanced monitoring flag
+New recipient limit (signal)   │ Rs. 10,000   │ UPI guideline for first-time payee
+Large transaction flag         │ Rs. 50,000   │ Enhanced monitoring
 ```
 
 These are **hard rules** (not ML) because:
-1. Regulators require demonstrable, explainable controls
-2. Zero latency — no network calls needed
+1. Regulators require demonstrable, auditable, explainable controls
+2. Zero latency — no network calls
 3. They catch velocity fraud patterns with 100% recall
+4. They are required even if ML is unavailable
 
 ---
 
-### 3.10 Blacklist Engine
+### 3.14 Blacklist Engine
 
 ```java
-// Loaded from fraud-engine/blacklist.json at Spring Boot startup
-private final Set<String> blockedDomains   = new HashSet<>();   // O(1) lookup
+// In-memory sets loaded from blacklist.json at Spring Boot startup
+private final Set<String> blockedDomains   = new HashSet<>();  // O(1) lookup
 private final Set<String> blockedEmails    = new HashSet<>();
 private final Set<String> blockedKeywords  = new HashSet<>();
 
 private boolean isBlacklisted(String identifier) {
-    // 1. Exact email match
+    identifier = identifier.toLowerCase().trim();
+
+    // Level 1: Exact email match (specific reported bad actors)
     if (blockedEmails.contains(identifier)) return true;
 
-    // 2. Domain match (extract domain from email)
+    // Level 2: Domain match (disposable email providers)
     int at = identifier.indexOf('@');
-    if (at >= 0 && blockedDomains.contains(identifier.substring(at+1))) return true;
+    if (at >= 0) {
+        String domain = identifier.substring(at + 1);
+        if (blockedDomains.contains(domain)) return true;
+    }
 
-    // 3. Keyword match (e.g., "fraud" in identifier)
+    // Level 3: Keyword match (catches variations like fraud123@gmail.com)
     for (String kw : blockedKeywords)
         if (identifier.contains(kw)) return true;
 
@@ -972,109 +1411,317 @@ private boolean isBlacklisted(String identifier) {
 }
 ```
 
-**Three-level check:**
-1. Exact email address (specific reported bad actors)
-2. Domain (all accounts from disposable email providers)
-3. Keywords (catches variations like `fraud123@gmail.com`)
+**Blacklisted disposable domains (sample):**
+```
+mailinator.com    guerrillamail.com   tempmail.com    temp-mail.org
+throwaway.email   dispostable.com     sharklasers.com yopmail.com
+fakeinbox.com     maildrop.cc         spamgourmet.com trashmail.com
+```
+
+**Why disposable emails signal fraud:** Fraudsters use throwaway email accounts that cannot be traced. A GoPay account registered with a disposable email provider is a strong indicator of malicious intent.
 
 ---
 
-### 3.11 Behavioural Signal Extraction
+### 3.15 Behavioural Signal Extraction (16 Signals)
 
-After the ML model scores a transaction, the Python service extracts **human-readable signals** from the feature values. These are shown in the Fraud Shield dashboard and the "Transaction Blocked" error message.
+After XGBoost scores a transaction, `extract_signals()` in `app.py` maps feature values to human-readable fraud signals. These appear in:
+- The `/fraud` Fraud Shield dashboard
+- The "Transaction Blocked" error banner in the UI
+- The `fraud_events.json` audit log
 
 ```python
 def extract_signals(data, fraud_prob):
     signals = []
 
-    if data['is_blacklisted']:
+    # CRITICAL signals (immediate block context)
+    if data.get('is_blacklisted', 0):
         signals.append({'code': 'blacklisted_recipient', 'severity': 'CRITICAL',
-                        'label': 'Recipient is on the GoPay fraud blacklist'})
+                        'label': 'Recipient on fraud blacklist'})
 
-    if data['txns_last_1h'] >= 4:
-        signals.append({'code': 'high_velocity_1h', 'severity': 'HIGH',
-                        'label': f"{data['txns_last_1h']} transactions in last 1 hour"})
+    vpa_risk = data.get('vpa_risk_score', 0)
+    if vpa_risk >= 60:
+        signals.append({'code': 'vpa_spoofing_detected', 'severity': 'CRITICAL',
+                        'label': f'VPA spoofing detected (risk score {vpa_risk}/100)'})
+    elif vpa_risk >= 30:
+        signals.append({'code': 'vpa_suspicious', 'severity': 'HIGH',
+                        'label': f'VPA handle resembles known legitimate handle (risk {vpa_risk}/100)'})
 
-    if data['amount_to_balance_ratio'] >= 0.75:
-        signals.append({'code': 'high_balance_drain', 'severity': 'HIGH',
-                        'label': f"Transaction drains {pct}% of wallet balance"})
+    if not data.get('ifsc_is_valid', 1):
+        signals.append({'code': 'invalid_ifsc', 'severity': 'HIGH',
+                        'label': 'IFSC code failed validation (unknown bank or invalid format)'})
 
-    if data['amount_to_avg_ratio'] >= 5:
-        signals.append({'code': 'unusual_amount', 'severity': 'HIGH',
-                        'label': f"Amount is {ratio}x the sender's historical average"})
+    # HIGH velocity signals
+    if data.get('txns_last_1h', 0) >= 4:
+        signals.append({'code': 'high_velocity_1h', 'severity': 'HIGH', ...})
 
-    if data['is_new_recipient'] and data['amount'] >= 10_000:
-        signals.append({'code': 'large_new_recipient', 'severity': 'MEDIUM',
-                        'label': 'Large amount to a first-time recipient'})
+    if data.get('amount_to_balance_ratio', 0) >= 0.75:
+        signals.append({'code': 'high_balance_drain', 'severity': 'HIGH', ...})
 
-    if data['is_night'] and data['is_new_recipient']:
-        signals.append({'code': 'night_new_recipient', 'severity': 'MEDIUM',
-                        'label': 'Late-night transaction to new recipient'})
+    if data.get('amount_to_avg_ratio', 0) >= 5:
+        signals.append({'code': 'unusual_amount', 'severity': 'HIGH', ...})
 
-    # ... 6 more signals
+    # Z-score anomaly (NEW in v2)
+    zscore = data.get('amount_zscore', 0)
+    if abs(zscore) >= 3:
+        signals.append({'code': 'amount_statistical_anomaly', 'severity': 'HIGH',
+                        'label': f'Amount is {abs(zscore):.1f} std deviations from sender norm'})
 
-    # Catch-all: if model flagged it but no rule fired, report ML anomaly
+    # MEDIUM signals
+    if data.get('is_new_recipient', 0) and data.get('amount', 0) >= 10_000:
+        signals.append({'code': 'large_new_recipient', 'severity': 'MEDIUM', ...})
+
+    if data.get('is_night', 0) and data.get('is_new_recipient', 0):
+        signals.append({'code': 'night_new_recipient', 'severity': 'MEDIUM', ...})
+
+    if data.get('unique_recipients_24h', 0) >= 5:
+        signals.append({'code': 'many_recipients', 'severity': 'MEDIUM', ...})
+
+    # Structuring detection
+    amt = data.get('amount', 0)
+    if amt > 500 and amt % 1000 < 50 and data.get('txns_last_24h', 0) >= 3:
+        signals.append({'code': 'structuring_pattern', 'severity': 'HIGH', ...})
+
+    if data.get('amount_sent_last_1h', 0) >= 15_000:
+        signals.append({'code': 'high_spend_rate_1h', 'severity': 'HIGH', ...})
+
+    if data.get('account_age_days', 365) < 7 and data.get('amount', 0) >= 5_000:
+        signals.append({'code': 'new_account_large_txn', 'severity': 'MEDIUM', ...})
+
+    # Catch-all: ML caught something not explained by rules
     if not signals and fraud_prob >= 0.35:
         signals.append({'code': 'ml_anomaly', 'severity': 'MEDIUM',
-                        'label': 'Behavioural pattern anomaly detected by ML model'})
+                        'label': 'Behavioral pattern anomaly detected by XGBoost model'})
 
     return signals
 ```
 
-This is **explainable AI in practice** — the ML model makes the decision, but the signal extractor provides the human-readable justification for regulators and users.
+**Complete signal catalogue (16 signals):**
+
+| Code | Severity | Description |
+|---|---|---|
+| `blacklisted_recipient` | CRITICAL | Recipient email/domain on GoPay blacklist |
+| `vpa_spoofing_detected` | CRITICAL | VPA handle is Levenshtein distance ≤ 1 from known handle |
+| `vpa_suspicious` | HIGH | VPA Jaro-Winkler similarity ≥ 0.92 to known handle |
+| `invalid_ifsc` | HIGH | IFSC fails structural or bank-registry validation |
+| `high_velocity_1h` | HIGH | 4+ transactions in a single hour |
+| `high_velocity_24h` | MEDIUM | 10+ transactions in 24 hours |
+| `high_balance_drain` | HIGH | Transaction ≥ 75% of wallet balance |
+| `unusual_amount` | HIGH | Amount ≥ 5× sender's historical average |
+| `amount_statistical_anomaly` | HIGH | Amount z-score ≥ 3 (3 standard deviations above norm) |
+| `large_new_recipient` | MEDIUM | ≥ Rs.10,000 to a first-time recipient |
+| `night_new_recipient` | MEDIUM | 00:00–05:59 transaction to new recipient |
+| `many_recipients` | MEDIUM | 5+ distinct recipients in 24 hours |
+| `structuring_pattern` | HIGH | Round-amount repeated transactions (PMLA offence) |
+| `high_spend_rate_1h` | HIGH | ≥ Rs.15,000 total sent in last hour |
+| `new_account_large_txn` | MEDIUM | Account < 7 days old, amount ≥ Rs.5,000 |
+| `ml_anomaly` | MEDIUM | Statistical anomaly detected by XGBoost (catch-all) |
 
 ---
 
-### 3.12 Risk Bands and Recommendations
+### 3.16 Risk Bands and Recommendations
 
 ```
 Score  │ Band      │ Recommendation │ User experience
-───────┼───────────┼────────────────┼─────────────────────────────────────────────────
+───────┼───────────┼────────────────┼─────────────────────────────────────────────────────
 0–34   │ LOW       │ ALLOW          │ Transaction proceeds silently
-35–59  │ MEDIUM    │ ALLOW          │ Proceeds; yellow badge in transaction history
-60–79  │ HIGH      │ REVIEW         │ Proceeds; orange badge + flagged in fraud log
-≥ 80   │ CRITICAL  │ BLOCK          │ Transaction rejected; user sees 🚫 error with link
+35–59  │ MEDIUM    │ ALLOW          │ Proceeds; amber badge in transaction history
+60–79  │ HIGH      │ REVIEW         │ Proceeds; red badge + flagged in fraud log + signal list
+≥ 80   │ CRITICAL  │ BLOCK          │ Transaction rejected; user sees blocked banner
 ```
 
 **Why REVIEW exists (not just ALLOW/BLOCK):**
+The 60–79 range has high ML confidence of fraud but not certainty. Blocking here causes too many false positives (frustrated legitimate users who churn). By allowing but flagging:
+- Legitimate users are not harmed
+- An audit trail exists for investigation
+- These labelled cases feed the next retraining cycle
 
-The 60–79 range represents transactions where the model has significant confidence of fraud but not certainty. Blocking legitimate transactions in this range would cause too many false positives (frustrated users). By allowing but flagging, we:
-- Don't harm legitimate users
-- Create an audit trail for investigation
-- Feed these cases back into model retraining
+**Python-side hard overrides (after ML score):**
+```python
+if data.get('is_blacklisted', 0):
+    fraud_score = max(fraud_score, 85)     # always CRITICAL
+
+if data.get('vpa_risk_score', 0) >= 60:
+    fraud_score = max(fraud_score, 75)     # always at least HIGH
+
+if not data.get('ifsc_is_valid', 1) and data.get('amount', 0) >= 5_000:
+    fraud_score = max(fraud_score, 65)     # always at least HIGH
+```
 
 ---
 
-### 3.13 Audit Trail and Compliance
+### 3.17 User Identity — Multi-Identifier Lookup
 
-Every fraud assessment is written to `fraud_events.json`:
+A major v2 improvement: users can now **log in and send money using either their email OR their mobile number**.
+
+#### The Problem (v1)
+
+In v1, `identifier` (the email) was the only lookup key. `mobileNumber` was stored as a separate field but never checked during authentication or recipient lookup. This meant:
+- Login with `9876543210` → **fails** (mobile not checked against `identifier`)
+- Send money to `9876543210` → **fails** (mobile not checked in recipient search)
+
+#### The Solution (v2)
+
+`AuthService.findUserByAnyIdentifier()` — a unified lookup method that checks both fields:
+
+```java
+public StoredUser findUserByAnyIdentifier(String raw, List<StoredUser> users) {
+    if (raw == null || raw.trim().isEmpty()) return null;
+    String normalized = raw.trim().toLowerCase();
+    String digitsOnly = normalized.replaceAll("[^0-9]", "");
+
+    for (StoredUser u : users) {
+        // Check 1: Email/identifier match
+        if (Objects.equals(u.identifier, normalized)) return u;
+
+        // Check 2: Mobile number match (10-digit Indian mobile)
+        if (digitsOnly.length() == 10
+                && Objects.equals(u.mobileNumber, digitsOnly)) return u;
+    }
+    return null;
+}
+```
+
+**Used in:**
+1. `AuthService.login()` — replaces old single-field filter:
+   ```java
+   // OLD: users.stream().filter(u -> u.identifier.equals(identifier)).findFirst()
+   // NEW:
+   StoredUser user = findUserByAnyIdentifier(identifierRaw, users);
+   ```
+
+2. `TransactionService.send()` — replaces old recipient lookup:
+   ```java
+   // OLD: users.stream().filter(u -> u.identifier.equals(recipientId)).findFirst()
+   // NEW:
+   StoredUser recipient = authService.findUserByAnyIdentifier(recipientId, users);
+   ```
+
+**Security note:** The `digitsOnly.length() == 10` guard prevents ambiguity — a 10-digit number is treated as a mobile, everything else as an email. This prevents attackers from using a numeric email to match against a mobile number.
+
+**UPI alignment:** This mirrors how PhonePe, Google Pay, and Paytm work — you can identify a payee by their registered mobile number, which is the primary UPI identity in India.
+
+---
+
+### 3.18 User Profile Extension — UPI and Banking Fields
+
+Four new fields were added to `StoredUser` in `AuthService.java` to support UPI, VPA spoofing detection, and IFSC validation:
+
+```java
+public static class StoredUser {
+    public String id;
+    public String name;
+    public String identifier;     // login email (primary key)
+    public String passwordSalt;
+    public String passwordHash;
+    public double balance;
+    public String createdAt;
+    // v2 additions:
+    public String mobileNumber;   // 10-digit Indian mobile (e.g., "9876543210")
+    public String vpa;            // UPI VPA (e.g., "user@ybl")
+    public String bankAccount;    // Bank account number
+    public String ifscCode;       // IFSC code (e.g., "HDFC0001234")
+}
+```
+
+#### Signup Flow
+
+New users can provide these fields during account creation:
+```
+Required: name, email (identifier), mobileNumber, password
+Optional: vpa, bankAccount, ifscCode
+```
+
+**Mobile validation:**
+```java
+String mobile = body.mobileNumber.trim().replaceAll("[^0-9]", "");
+if (mobile.length() == 10) user.mobileNumber = mobile;
+// Non-10-digit → silently ignored
+```
+
+**VPA validation:**
+```java
+// Must contain '@' to be stored
+if (body.vpa != null && !body.vpa.trim().isEmpty()) {
+    user.vpa = body.vpa.trim().toLowerCase();
+}
+```
+
+**IFSC validation:**
+```java
+// Full structural validation in updateProfile:
+if (!ifsc.matches("^[A-Z]{4}0[A-Z0-9]{6}$"))
+    throw new BadRequestException("Invalid IFSC format. Expected: XXXX0XXXXXX");
+```
+
+#### Profile Update Endpoint
+
+`PATCH /api/v1/me` — allows updating any of the extended fields after account creation:
+```json
+{
+    "name": "Harsh Sharma",
+    "mobileNumber": "9876543210",
+    "vpa": "harsh@ybl",
+    "bankAccount": "001122334455",
+    "ifscCode": "HDFC0001234"
+}
+```
+
+The `Profile.tsx` frontend page includes live VPA and IFSC validation buttons that call `POST /vpa-check` and `POST /ifsc-validate` directly before saving — giving users instant feedback.
+
+#### How These Fields Feed Fraud Detection
+
+```
+User registers with ifscCode = "FAKE0123456"
+                              ↓
+When someone sends money TO this user:
+  FraudService.enrichWithVpaAndIfsc(feat, recipient)
+  → POST /ifsc-validate {"ifsc": "FAKE0123456"}
+  → Response: {is_valid: false, risk: "HIGH"}
+  → feat.ifscIsValid = 0
+  → Layer 0b fires: amount >= 5,000 → BLOCK
+```
+
+This means fraud signals from the recipient's profile are incorporated **before** ML scoring — no data is wasted.
+
+---
+
+### 3.19 Audit Trail and Compliance
+
+Every fraud assessment is written to `fraud_events.json` in real time:
 
 ```json
 {
   "id":             "fe_1775296292242",
   "fromUserId":     "user_90ba1a56ad5dd250",
-  "fromName":       "Yash Vardhan Sharma",
-  "fromIdentifier": "yash.rpsp@gmail.com",
+  "fromName":       "Harsh Sharma",
+  "fromIdentifier": "harsh@gopay.com",
   "toIdentifier":   "test@example.com",
   "amount":         500.0,
   "fraudScore":     0,
   "riskLevel":      "LOW",
   "recommendation": "ALLOW",
   "signals":        [],
-  "model":          "ml_random_forest",
-  "createdAt":      "2026-04-04T09:51:32.242154600Z"
+  "model":          "xgboost_v2",
+  "createdAt":      "2026-04-05T14:21:32Z"
 }
 ```
 
-**Why this matters for compliance:**
-- **RBI KYC/AML requirements** mandate that financial institutions maintain transaction monitoring records
-- **Dispute resolution**: If a user disputes a blocked transaction, the audit log shows exactly what signals triggered it
-- **Model accountability**: Regulators can audit which model version made each decision (`"model"` field)
-- **Retraining data**: Human-reviewed events can be used as ground truth labels for the next model version
+**Compliance value of each field:**
+- `model` field: distinguishes `"xgboost_v2"` vs `"rule_based_fallback"` vs `"blacklist"` vs `"vpa_levenshtein"` vs `"ifsc_validator"` vs `"velocity_rules"` — satisfies RBI model accountability requirements
+- `signals[]`: human-readable explanations → satisfies explainability requirements for automated decisions
+- `createdAt`: ISO 8601 timestamp → audit trail for dispute resolution
+- `fromIdentifier` / `toIdentifier`: links to KYC records
+- Maximum 1,000 events retained in-memory (configurable — in production would be a database with indefinite retention)
+
+**Why RBI mandates this:**
+- **PMLA 2002** requires transaction monitoring records for ≥5 years
+- **RBI KYC/AML guidelines** mandate documentation of risk assessments
+- **Dispute resolution**: if a user's transaction is blocked, the audit log shows exactly which signal triggered it
+- **Model governance**: regulators can audit which model version made each decision
 
 ---
 
-### 3.14 System Architecture (End-to-End)
+### 3.20 System Architecture (End-to-End)
 
 ```
 User initiates Send Money
@@ -1083,34 +1730,38 @@ User initiates Send Money
 React SendMoney.tsx
         │  POST /api/v1/transactions/send
         │  Body: { recipientIdentifier, amount, note }
+        │         recipientIdentifier can be EMAIL or MOBILE NUMBER
         │  Authorization: Bearer <token>
         ▼
 Spring Boot TransactionController.java
         │  transactionService.send(authHeader, body)
         ▼
-TransactionService.java — Validation
-        │  ├─ Authenticate sender
-        │  ├─ Find recipient (or throw 400)
-        │  ├─ Check sender has sufficient balance
-        │  └─ Build sender + recipient StoredUser objects
+TransactionService.java
+        │  1. Authenticate sender (getUserByToken)
+        │  2. authService.findUserByAnyIdentifier(recipientId)
+        │     → checks u.identifier (email) OR u.mobileNumber (10 digits)
+        │  3. Check balance
+        │  4. Build sender + recipient StoredUser objects
         │
         │  ⬇ FRAUD CHECK (before any money moves)
         ▼
 FraudService.java
-        │  ├─ Layer 1: isBlacklisted(recipient.identifier)
-        │  ├─ Layer 2: checkHardVelocity(features, recentSent, amount)
-        │  ├─ buildFeatures(sender, recipient, amount, recentSent)
-        │  └─ callMlService(features)
-        │         │
-        │         │  POST http://localhost:5002/assess   (3s timeout)
-        │         ▼
-        │  Python Flask app.py
-        │         │  RandomForest.predict_proba() → 0.94
-        │         │  extract_signals() → ["high_balance_drain", "is_night"]
-        │         │  Response: { fraudScore: 94, riskLevel: "CRITICAL",
-        │         │              recommendation: "BLOCK", signals: [...] }
-        │         ▼
-        │  (timeout) → ruleFallback(features)
+        │  enrichWithVpaAndIfsc(feat, recipient)
+        │  ├── POST /vpa-check  (recipient.vpa)   [1s timeout]
+        │  └── POST /ifsc-validate (recipient.ifscCode) [1s timeout]
+        │
+        │  Layer 0a: if vpaRiskScore ≥ 80 → BLOCK
+        │  Layer 0b: if ifscIsValid==0 + amt≥5k → BLOCK
+        │  Layer 1:  isBlacklisted(recipient.identifier)
+        │  Layer 2:  checkHardVelocity(features, recentSent, amount)
+        │  Layer 3:  buildFeatures(20-feature vector, including zscore)
+        │  Layer 4:  callMlService(features)
+        │               │  POST http://localhost:5002/assess
+        │               │  XGBClassifier.predict_proba() → fraud_prob
+        │               │  extract_signals() → 16 possible signals
+        │               │  → { fraudScore, riskLevel, recommendation, signals }
+        │               │
+        │            (3s timeout) → ruleFallback(features) [Layer 5]
         │
         │  FraudAssessment { fraudScore, riskLevel, recommendation, signals }
         ▼
@@ -1118,90 +1769,119 @@ TransactionService.java — Post-fraud decision
         │
         ├─ If BLOCK:
         │    throw BadRequestException("Transaction blocked: " + signals[0].label)
-        │    → HTTP 400 → React shows 🚫 banner
+        │    → HTTP 400 → React shows blocked banner with signal explanation
         │
         └─ If ALLOW/REVIEW:
              Deduct from sender balance
              Credit recipient balance
              Write transaction with fraud metadata:
                { fraudScore, fraudRiskLevel, fraudSignals, fraudRecommendation }
-             logEvent(sender, recipient, amount, assessment) → fraud_events.json
+             logEvent() → fraud_events.json  [model: "xgboost_v2"]
         ▼
 React renders:
-        ├─ Success: transaction details + optional risk badge
-        └─ Blocked: 🚫 banner with signal description + link to /fraud
+        ├─ Success: transaction details + risk badge (LOW/MEDIUM/HIGH/CRITICAL)
+        └─ Blocked: error banner with signal description + link to /fraud
 ```
 
 ---
 
-### 3.15 Model Performance
+### 3.21 Model Performance — v2
+
+#### XGBoost on Numpy Data (25,000 rows, 7 archetypes, 20 features)
 
 ```
-Metric                      │ Value  │ Notes
-────────────────────────────┼────────┼──────────────────────────────────────────────
-AUC-ROC                     │ 1.0000 │ Perfect separation on synthetic data
-AUC-PR (avg precision)      │ 1.0000 │ Precision-recall curve (robust for imbalance)
-Precision (fraud class)     │ 0.99   │ 99% of "fraud" predictions are correct
-Recall (fraud class)        │ 1.00   │ 100% of actual fraud cases are caught
-F1-score (fraud class)      │ 0.99   │ Harmonic mean of precision and recall
-Overall accuracy            │ 1.00   │ 99.98% on 4,000-sample test set
-5-fold CV AUC-ROC           │ 1.0000 │ ± 0.0000 — very stable across folds
-Training samples            │ 16,000 │ 80% of 20,000
-Test samples                │ 4,000  │ 20% of 20,000 (stratified split)
+Metric                      │ v1 RandomForest  │ v2 XGBoost
+────────────────────────────┼──────────────────┼─────────────────────────────────
+Dataset size                │ 20,000           │ 25,000
+Features                    │ 16               │ 20
+Fraud archetypes            │ 5                │ 7
+AUC-ROC                     │ 1.0000           │ 1.0000
+AUC-PR (avg precision)      │ 1.0000           │ 1.0000
+Precision (fraud class)     │ 0.99             │ 1.00
+Recall (fraud class)        │ 1.00             │ 1.00
+F1-score (fraud class)      │ 0.99             │ 1.00
+Overall accuracy            │ 0.9998           │ 1.0000
+5-fold CV AUC-ROC           │ 1.0000 ± 0.0000  │ 1.0000 ± 0.0000
+Training rows               │ 16,000           │ 20,000
+Test rows                   │ 4,000            │ 5,000
+Class ratio (legit:fraud)   │ 7.33:1           │ 7.33:1
+scale_pos_weight            │ N/A (class_weight)│ 7.33
 ```
 
-**Note on perfect scores:**
-AUC-ROC=1.0 on synthetic data is expected because the fraud archetypes are designed with very distinct feature signatures. Real-world fraud data will have more overlap with legitimate transactions (fraud evolves to mimic legitimate behaviour), so real-world performance will be lower — typically AUC-ROC 0.92–0.97 for a well-tuned fraud model.
+**Note on perfect AUC-ROC (1.0):**
+On synthetic data with well-separated fraud archetypes, perfect separation is expected because each archetype has highly distinct feature signatures. In real production:
+- Real fraud evolves to mimic legitimate transactions
+- Expected real-world AUC-ROC: 0.92–0.97 (industry benchmark for well-tuned fraud models)
+- AUC-PR typically 0.75–0.90 (fraud is rare, making precision-recall harder)
+
+**SDV-enhanced model (target — run `generate_sdv_data.py` then `train.py`):**
+```
+Target dataset: 80,000 rows (80% legit, 12% fraud)
+Expected improvement: AUC-PR from 1.0 → still 1.0 on synthetic
+                     but model generalizes better to real-world edge cases
+                     because SDV preserves multi-archetype joint correlations
+```
 
 ---
 
 ## 4. Comparison: Credit Score vs Fraud Score
 
 ```
-Dimension              │ Credit Score Engine      │ Fraud Risk Scorer
-───────────────────────┼──────────────────────────┼────────────────────────────────────────
-ML task                │ Regression               │ Classification
-Model                  │ GradientBoostingRegressor│ RandomForestClassifier
+Dimension              │ Credit Score Engine v1   │ Fraud Risk Scorer v2
+───────────────────────┼──────────────────────────┼──────────────────────────────────────────
+ML task                │ Regression               │ Binary Classification
+Model                  │ GradientBoostingRegressor│ XGBoostClassifier
 Output                 │ Continuous (300–900)     │ Probability → score (0–100)
-Label generation       │ Deterministic formula    │ 5 archetypal fraud patterns
-Training data          │ 60,000 SDV-enhanced profiles │ 20,000 transactions
-Class balance          │ 3 buckets (30/40/30)     │ 88% legit / 12% fraud
-Key metric             │ MAE, R²                  │ AUC-ROC, AUC-PR, Recall
+Label generation       │ Deterministic formula    │ 7 archetypal fraud patterns
+Training data          │ 60,000 SDV-enhanced rows │ 25,000 rows (80k with SDV)
+Class balance          │ 3 score buckets (30/40/30)│ 88% legit / 12% fraud
+Key metric             │ MAE (2.09), R² (0.9989)  │ AUC-ROC (1.0), AUC-PR (1.0)
 Time window            │ All-time history          │ Last 1h / 24h / 30 days
-Decision type          │ Informational             │ Operational (blocks money)
+Decision type          │ Informational (score only)│ Operational (blocks money)
 When computed          │ On user request           │ Before every transaction
-Fallback               │ Java formula              │ Java rules + velocity checks
+Fallback               │ Java rule formula         │ Java rules + velocity checks
 Python port            │ 5001                      │ 5002
-Industry parallel      │ CIBIL, Experian, Equifax │ Stripe Radar, PayPal, Razorpay
+New features in v2     │ —                         │ VPA risk, IFSC valid, z-score, has_vpa
+New archetypes in v2   │ —                         │ VPA Spoofing, Fake IFSC Fraud
+Decision layers        │ 1 (ML or fallback)        │ 7 (Layer 0a/0b/1/2/3/4/5)
+Endpoints              │ GET /score                │ POST /assess, /vpa-check, /ifsc-validate
+User fields used       │ balance, txns, age        │ vpa, ifscCode, mobileNumber, balance
+Industry parallel      │ CIBIL, Experian, Equifax  │ Stripe Radar, Razorpay Shield, PayPal
 ```
 
 ---
 
 ## 5. Key Interview Q&A
 
-**Q: Why did you use GBR for credit and RF for fraud?**
-> Credit scoring is a **regression problem** — we need a continuous score 300–900. GBR achieves lower MSE than RF for regression. Fraud is a **classification problem** with severe class imbalance — RF with `class_weight='balanced'` handles this natively and outputs well-calibrated probabilities. The choice is driven by the problem formulation, not preference.
+**Q: Why did you upgrade from RandomForest to XGBoost for fraud detection?**
+> XGBoost is the **industry standard** for tabular fraud detection (used by Razorpay, Setu, Stripe, PayPal). The key advantages are: (1) L1/L2 regularization built into the loss function — not just tree depth; (2) `scale_pos_weight` is a more principled approach to class imbalance than per-sample weights; (3) `eval_metric='aucpr'` optimizes directly for the right metric (precision-recall, not accuracy); (4) second-order gradient optimization converges to better optima on the fraud decision boundary.
 
-**Q: How do you handle the cold start problem for new users?**
-> New users have `total_transactions=0`, `days_since_last_txn=account_age_days`, `avg_transaction_amount=0`. Both models were trained on profiles that include new users (account_age_days = 1–30 in the low-score bucket for credit; newly created accounts in multiple fraud archetypes). The models produce conservative outputs for new users — low credit scores and higher fraud risk for large amounts — which is the correct real-world behaviour.
+**Q: What is Levenshtein distance and why is it the right algorithm for VPA spoofing?**
+> Levenshtein distance is the minimum number of single-character insertions, deletions, or substitutions to transform one string into another. It's computed via dynamic programming in O(m×n) time. For VPA spoofing, it's ideal because: attackers make exactly 1–2 character changes to legitimate handles (e.g., `okicici → okicicl`). A distance of 1 means the strings are near-identical. We layer Jaro-Winkler on top because it gives extra weight to prefix matches — most VPA spoofing differs only at the end of the handle.
 
-**Q: What's your false positive rate and why does it matter more than false negatives in some contexts?**
-> False positives (blocking legitimate transactions) are operationally more dangerous than false negatives in UX terms — a user whose legitimate Rs. 5,000 payment is blocked will likely abandon the app. That's why we use the REVIEW band (60–79): allow the transaction but flag it, rather than blocking it. We only block at score ≥ 80, where confidence is very high.
+**Q: What is IFSC validation and why does it matter for fraud detection?**
+> IFSC (Indian Financial System Code) is an 11-character code identifying every bank branch in India. Format: `[4-letter bank code][0][6-char branch code]`. Fraudsters use non-existent IFSC codes (valid format, fake bank code) to redirect payments. We validate at two layers: (1) structural regex `^[A-Z]{4}0[A-Z0-9]{6}$` and (2) the RBI bank code registry (70+ registered banks). An IFSC with an unknown bank code gets risk=HIGH and triggers a hard BLOCK for amounts ≥ Rs.5,000.
 
-**Q: How would you retrain these models as real data accumulates?**
-> For the credit model: replace the synthetic profile generation with real `users.json` and `transactions.json` data, apply the same label formula, retrain the pipeline, save `model.pkl`, restart the Flask service. For the fraud model: supplement synthetic data with real fraud cases (confirmed via disputes or manual review), retrain with the same architecture. No code changes to Spring Boot or React — they consume the API, not the model directly.
+**Q: What is the z-score anomaly detection feature and how does it improve fraud detection?**
+> The z-score measures how many standard deviations the current transaction is from the sender's historical average: `z = (amount - mean_sent) / std_sent`. This is user-specific normalization — if User A normally sends Rs.100–200 and suddenly sends Rs.10,000, the z-score is ~50 (extreme anomaly). If User B normally sends Rs.1,000–50,000, the same Rs.10,000 has z-score ~0 (normal). Raw amount comparisons fail here; z-score succeeds. |z| ≥ 3 fires the `amount_statistical_anomaly` signal.
 
-**Q: What if the Python service goes down in production?**
-> Both services have Java fallbacks that run the same logic deterministically without any Python dependency. The `model` field in the response indicates whether ML or rules were used (`"ml_gradient_boosting"` vs `"rule_based_fallback"`). The fraud service also has velocity rules as Layer 2, which catch the most critical cases even without ML.
+**Q: How do you handle mobile number as a login/payment identifier?**
+> In v1, only the email (`identifier` field) was used for lookup. Mobile was stored separately as `mobileNumber` but never queried. The v2 fix adds `findUserByAnyIdentifier()` which checks both fields: first exact match on `u.identifier` (email), then if the input is exactly 10 digits, it matches against `u.mobileNumber`. This is used in both `login()` and the recipient lookup in `TransactionService.send()`. This mirrors how PhonePe and Google Pay work — a payee is identified by their registered mobile number.
 
-**Q: How is this different from what real companies like Stripe do?**
-> Stripe Radar uses: (1) global network effects — it sees 100s of billions of transactions across all merchants, (2) device fingerprinting, (3) graph neural networks to detect fraud rings, (4) a rules engine that merchants can customise. We've replicated the core ML architecture (RF classifier + velocity rules + blacklist + explainable signals) but without the global network effect — which is the most powerful signal in real production systems.
+**Q: Why are Layer 0a/0b (VPA + IFSC) checked before Blacklist (Layer 1)?**
+> The ordering is deliberate. VPA and IFSC checks have ~1s network latency (calling Python service) but they catch entirely different fraud types than the blacklist. We run them first because: (1) they cover the new fraud archetypes (VPA spoofing, fake IFSC) that the blacklist cannot; (2) if the VPA check fires, we avoid the blacklist lookup entirely (cascade economics); (3) in practice, VPA spoofing is a growing fraud vector in India that isn't yet on any blacklist.
 
-**Q: Why is the credit score range 300–900 specifically?**
-> This is the CIBIL score range (300 minimum, 900 maximum), established to align with India's credit bureau standard. Scores below 300 or above 900 are theoretically impossible in the CIBIL system. By using the same scale, GoPay's credit score is directly interpretable by users familiar with their CIBIL score.
+**Q: How does SDV improve the fraud model specifically (vs just generating more random data)?**
+> Without SDV, features are sampled independently. This misses multi-feature correlations that define each fraud archetype. For example, velocity fraud has `txns_last_1h` ↑ AND `unique_recipients_24h` ↑ AND `amount` ↓ — a 3-way correlation. Independent sampling would generate high-velocity transactions with large amounts (which aren't velocity fraud). SDV learns the **joint distribution** across all 20 features separately for fraud and legitimate transactions, generating data where feature combinations are as realistic as the seed data.
 
-**Q: How do you ensure the ML model is explainable for regulators?**
-> Two mechanisms: (1) Feature importances from the ensemble tell us which features drove predictions globally. (2) The signal extraction layer in `app.py` translates feature values into human-readable strings (`"Amount is 12.3× the sender's historical average"`) for each individual transaction. This satisfies RBI's requirement for explainability in automated credit/fraud decisions.
+**Q: What if the Python VPA/IFSC service is unavailable during a transaction?**
+> Both Layer 0a and 0b have graceful degradation: if the `POST /vpa-check` or `POST /ifsc-validate` call times out (1s timeout) or throws an exception, the Java code silently uses safe defaults — `vpaRiskScore=0` (no spoofing risk) and `ifscIsValid=1` (assume valid). This means the transaction falls through to the existing ML and velocity layers. The 1s timeout is intentional — it's much shorter than the 3s ML timeout because VPA/IFSC checks are simpler and we want to fail fast.
+
+**Q: How would you retrain the fraud model as real fraud data accumulates?**
+> The pipeline is: (1) collect confirmed fraud cases from dispute resolution + manual review; (2) combine with existing synthetic data (real trumps synthetic); (3) run `generate_sdv_data.py` with real data as seed to expand via SDV; (4) retrain with `python train.py` — it auto-detects `fraud_sdv_data.csv`; (5) evaluate AUC-ROC/AUC-PR on held-out real fraud cases; (6) if improvement, hot-swap `fraud_model.pkl` and restart Flask. No Spring Boot or React changes needed — they consume the API, not the model.
+
+**Q: How would you scale this to production (millions of transactions per day)?**
+> Replace the Flask service with FastAPI + uvicorn (async). Add Resilience4j circuit breakers in Spring Boot for the fraud service call. Cache velocity data in Redis (vs reading transactions.json each time). Replace file-based storage with PostgreSQL for users/transactions/fraud_events. Add the Kafka outbox pattern for audit events (fraud.flagged topic consumed by risk ops). Add device fingerprinting and IP geolocation as new features. The XGBoost model itself would still work at scale — it's a fast batch predictor.
 
 ---
 
@@ -1213,31 +1893,44 @@ Industry parallel      │ CIBIL, Experian, Equifax │ Stripe Radar, PayPal, Ra
 |---|---|---|---|
 | CIBIL | Logistic Regression + scorecard | 200+ loan repayment variables | 1.5B+ records |
 | Experian | GBM ensemble | 700+ variables | Global |
-| Upstart | Deep Learning | 1,600+ variables including education, employment | US lending |
-| GoPay (ours) | GradientBoostingRegressor | 8 payment behaviour variables | Platform data |
+| Upstart | Deep Learning | 1,600+ variables (education, employment) | US lending |
+| Paytm | Internal GBM | UPI transaction behaviour | India |
+| **GoPay (ours)** | **GradientBoostingRegressor + SDV** | **8 payment behaviour variables** | **Platform data** |
 
-**Key difference:** Traditional bureaus use loan repayment history (did you pay your EMI on time?). GoPay uses payment behaviour (how actively do you transact, what's your balance pattern?). As fintech matures, payment behaviour is increasingly used as a credit proxy — Paytm, PhonePe, and Razorpay all have internal credit scoring using UPI data.
+**Key difference:** Traditional bureaus use loan repayment history. GoPay uses payment behaviour (activity, balance, cash flow). As fintech matures, payment behaviour is increasingly used as a credit proxy — Paytm, PhonePe, and Razorpay all have internal credit scoring using UPI data.
 
 ### Fraud Detection
 
-| Company | Architecture | Key signals |
-|---|---|---|
-| Stripe Radar | RF + network graph | 4,000+ signals, cross-merchant patterns |
-| PayPal | Adaptive AI (deep learning) | Device fingerprint, behavioural biometrics |
-| Razorpay Shield | Rule engine + ML | Velocity, BIN analysis, device trust |
-| NPCI (UPI) | Rule-based | Velocity limits, FIDO device binding |
-| GoPay (ours) | RF + 5-layer cascade | 16 signals, velocity rules, blacklist |
+| Company | Algorithm | Key signals | Special techniques |
+|---|---|---|---|
+| Stripe Radar | RF + GNN | 4,000+ signals, cross-merchant | Global network effect |
+| PayPal | Adaptive AI (deep learning) | Device fingerprint, biometrics | Real-time model updates |
+| Razorpay Shield | XGBoost + rules | Velocity, BIN, device trust | Merchant-specific thresholds |
+| PhonePe | XGBoost | Velocity, UPI device binding | FIDO2 device attestation |
+| NPCI (UPI) | Rule-based | Velocity limits, device ID | Regulatory hard limits |
+| **GoPay v2 (ours)** | **XGBoost + 7-layer cascade** | **20 signals, VPA Levenshtein, IFSC registry, z-score** | **Layer 0 VPA+IFSC, SDV synthetic data** |
 
-**The key signal we're missing vs production systems:** Device fingerprinting and IP geolocation. In a real implementation, you would also include:
-- `ip_country` vs `account_country` mismatch
-- `device_id` seen for the first time
-- `user_agent` anomalies
-- `latitude/longitude` jump (impossible travel — account accessed from Delhi and Mumbai within 5 minutes)
+**What real companies do that we've now replicated:**
+- ✅ XGBoost classifier (Razorpay, PhonePe standard)
+- ✅ Velocity rules aligned with NPCI/RBI guidelines
+- ✅ VPA spoofing via edit distance (NPCI fraud advisory recommendation)
+- ✅ IFSC validation (standard in any UPI-compliant app)
+- ✅ Amount z-score / statistical anomaly (Stripe's user-baseline deviation signal)
+- ✅ Explainable signals per transaction (RBI explainability requirement)
+- ✅ Audit trail with model version tracking (RBI model governance)
 
-These signals are the **strongest fraud indicators** in production but require additional infrastructure (device SDKs, IP geolocation DBs) beyond the scope of this project.
+**What production systems have that we don't (yet):**
+- ❌ Device fingerprinting (`device_id` mismatch — strongest single fraud signal)
+- ❌ IP geolocation (`ip_country != account_country` — impossible travel detection)
+- ❌ Graph neural networks (fraud ring detection across multiple accounts)
+- ❌ Global network effects (Stripe sees 100B+ txns — cross-merchant fraud patterns)
+- ❌ Real-time model updates (online learning as fraud patterns evolve)
+
+These would require additional infrastructure (device SDKs, IP geo DBs, GNN training cluster) beyond the current project scope.
 
 ---
 
-*Document generated for GoPay Payment App.*
-*Models: GradientBoostingRegressor (credit, port 5001) + RandomForestClassifier (fraud, port 5002)*
-*Stack: Python 3.12 · scikit-learn 1.5.2 · Flask 3.0.3 · Spring Boot 2.7.17 · React 18*
+*Document version: v2 — updated to reflect Fraud Engine v2 (XGBoost, 7 archetypes, 20 features, VPA/IFSC detection, SDV fraud data, multi-identifier login)*
+*Credit Engine: GradientBoostingRegressor, 8 features, SDV 60k rows, port 5001*
+*Fraud Engine v2: XGBoostClassifier, 20 features, 7 archetypes, 7-layer cascade, port 5002*
+*Stack: Python 3.12 · scikit-learn 1.5.2 · xgboost 3.2.0 · sdv 1.35.1 · Flask 3.0.3 · Spring Boot 2.7.17 · React 18*

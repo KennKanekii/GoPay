@@ -1,0 +1,36 @@
+====================================================================
+SDV Fraud Data Quality Report
+====================================================================
+
+Seed rows     : 5,000
+Generated rows: 80,000
+
+Fraud rate  seed=12.0%  gen=11.9%
+
+--- Feature means (seed vs generated) ---
+
+  amount                         seed= 3444.738  gen= 3485.957  [OK]
+  amount_to_balance_ratio        seed=    0.254  gen=    0.257  [OK]
+  amount_to_avg_ratio            seed=    5.385  gen=    6.005  [OK]
+  txns_last_1h                   seed=    0.445  gen=    1.871  [DRIFT]
+  txns_last_24h                  seed=    3.308  gen=    3.072  [OK]
+  amount_sent_last_1h            seed= 2294.005  gen= 3229.806  [DRIFT]
+  amount_sent_last_24h           seed= 6632.393  gen= 8125.090  [DRIFT]
+  unique_recipients_24h          seed=    2.043  gen=    3.511  [DRIFT]
+  is_new_recipient               seed=    0.312  gen=    0.315  [OK]
+  hour_of_day                    seed=   12.379  gen=   12.592  [OK]
+  is_night                       seed=    0.090  gen=    0.091  [OK]
+  is_weekend                     seed=    0.291  gen=    0.288  [OK]
+  account_age_days               seed=  140.355  gen=  143.663  [OK]
+  is_round_amount                seed=    0.020  gen=    0.022  [OK]
+  is_blacklisted                 seed=    0.026  gen=    0.027  [OK]
+  balance_after_ratio            seed=    0.789  gen=    0.778  [OK]
+  vpa_risk_score                 seed=    4.002  gen=   28.386  [DRIFT]
+  ifsc_is_valid                  seed=    0.898  gen=    0.895  [OK]
+  amount_zscore                  seed=   -0.688  gen=   -0.669  [OK]
+  sender_has_vpa                 seed=    0.673  gen=    0.666  [OK]
+
+--- Quality score ---
+
+  Mean drift     : 0.458
+  Quality score  : 0.542  (target >= 0.65)

@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -80,6 +81,24 @@ public class AuthController {
     }
   }
 
+  @PatchMapping("/api/v1/me")
+  public ResponseEntity<?> updateProfile(
+      @RequestHeader(name = "Authorization", required = false) String authHeader,
+      @RequestBody UpdateProfileRequest body) {
+    try {
+      MeResponse me = authService.updateProfile(authHeader, body);
+      return ResponseEntity.ok(me);
+    } catch (AuthService.UnauthorizedException e) {
+      Map<String, Object> res = new HashMap<>();
+      res.put("ok", false); res.put("error", e.getMessage());
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(res);
+    } catch (AuthService.BadRequestException e) {
+      Map<String, Object> res = new HashMap<>();
+      res.put("ok", false); res.put("error", e.getMessage());
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(res);
+    }
+  }
+
   @PostMapping("/api/v1/auth/logout")
   public ResponseEntity<?> logout(@RequestHeader(name = "Authorization", required = false) String authHeader) {
     try {
@@ -100,6 +119,11 @@ public class AuthController {
     public String name;
     public String identifier;
     public String password;
+    // Optional extended fields
+    public String mobileNumber;
+    public String vpa;
+    public String bankAccount;
+    public String ifscCode;
   }
 
   public static class LoginRequest {
@@ -107,11 +131,23 @@ public class AuthController {
     public String password;
   }
 
+  public static class UpdateProfileRequest {
+    public String name;
+    public String mobileNumber;
+    public String vpa;
+    public String bankAccount;
+    public String ifscCode;
+  }
+
   public static class MeResponse {
     public String id;
     public String name;
     public String identifier;
     public double balance;
+    public String mobileNumber;
+    public String vpa;
+    public String bankAccount;
+    public String ifscCode;
   }
 
   public static class LoginResponse {

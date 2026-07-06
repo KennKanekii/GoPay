@@ -1,0 +1,11 @@
+============================================================
+GoPay Fraud Engine — Training Report
+============================================================
+Model          : xgboost_v2
+Data source    : SDV-enhanced (fraud_sdv_data.csv, 80,000 rows)
+Train rows     : 64,000
+Test rows      : 16,000
+Fraud rate     : 27.0%
+AUC-ROC        : 0.9797
+AUC-PR         : 0.9602
+Features       : 20

@@ -67,6 +67,21 @@ public class AuthService {
     user.balance = DEFAULT_BALANCE;
     user.createdAt = Instant.now().toString();
 
+    // Optional extended fields from signup
+    if (body.mobileNumber != null && !body.mobileNumber.trim().isEmpty()) {
+      String mobile = body.mobileNumber.trim().replaceAll("[^0-9]", "");
+      if (mobile.length() == 10) user.mobileNumber = mobile;
+    }
+    if (body.vpa != null && !body.vpa.trim().isEmpty()) {
+      user.vpa = body.vpa.trim().toLowerCase();
+    }
+    if (body.bankAccount != null && !body.bankAccount.trim().isEmpty()) {
+      user.bankAccount = body.bankAccount.trim();
+    }
+    if (body.ifscCode != null && !body.ifscCode.trim().isEmpty()) {
+      user.ifscCode = body.ifscCode.trim().toUpperCase();
+    }
+
     users.add(user);
     writeUsers(users);
     return userId;
@@ -79,11 +94,8 @@ public class AuthService {
     if (identifierRaw.trim().length() < 3) throw new BadRequestException("Phone/email is required.");
     if (password.length() < 6) throw new UnauthorizedException("Invalid credentials.");
 
-    String identifier = normalizeIdentifier(identifierRaw);
     List<StoredUser> users = readUsers();
-    StoredUser user = users.stream()
-        .filter(u -> Objects.equals(u.identifier, identifier))
-        .findFirst().orElse(null);
+    StoredUser user = findUserByAnyIdentifier(identifierRaw, users);
     if (user == null) throw new UnauthorizedException("Invalid credentials.");
 
     if (!Objects.equals(hashPassword(password, user.passwordSalt), user.passwordHash)) {
@@ -116,12 +128,53 @@ public class AuthService {
     StoredUser user = getUserByToken(authHeader);
 
     AuthController.MeResponse resp = new AuthController.MeResponse();
-    resp.id = user.id;
-    resp.name = user.name;
-    resp.identifier = user.identifier;
-    // Seed legacy accounts (balance==0) on first /me call.
-    resp.balance = user.balance > 0 ? user.balance : DEFAULT_BALANCE;
+    resp.id           = user.id;
+    resp.name         = user.name;
+    resp.identifier   = user.identifier;
+    resp.balance      = user.balance > 0 ? user.balance : DEFAULT_BALANCE;
+    resp.mobileNumber = user.mobileNumber;
+    resp.vpa          = user.vpa;
+    resp.bankAccount  = user.bankAccount;
+    resp.ifscCode     = user.ifscCode;
     return resp;
+  }
+
+  public AuthController.MeResponse updateProfile(String authHeader,
+                                                   AuthController.UpdateProfileRequest body) {
+    StoredUser user = getUserByToken(authHeader);
+
+    if (body.name != null && body.name.trim().length() >= 2) {
+      user.name = body.name.trim();
+    }
+    if (body.mobileNumber != null) {
+      String mobile = body.mobileNumber.trim().replaceAll("[^0-9]", "");
+      if (mobile.length() == 10) user.mobileNumber = mobile;
+      else if (mobile.isEmpty()) user.mobileNumber = null;
+      else throw new BadRequestException("Mobile number must be 10 digits.");
+    }
+    if (body.vpa != null) {
+      String vpa = body.vpa.trim().toLowerCase();
+      if (!vpa.isEmpty() && !vpa.contains("@"))
+        throw new BadRequestException("VPA must be in format username@handle.");
+      user.vpa = vpa.isEmpty() ? null : vpa;
+    }
+    if (body.bankAccount != null) {
+      user.bankAccount = body.bankAccount.trim().isEmpty() ? null : body.bankAccount.trim();
+    }
+    if (body.ifscCode != null) {
+      String ifsc = body.ifscCode.trim().toUpperCase();
+      if (!ifsc.isEmpty() && !ifsc.matches("^[A-Z]{4}0[A-Z0-9]{6}$"))
+        throw new BadRequestException("Invalid IFSC format. Expected: XXXX0XXXXXX");
+      user.ifscCode = ifsc.isEmpty() ? null : ifsc;
+    }
+
+    List<StoredUser> users = readUsers();
+    for (int i = 0; i < users.size(); i++) {
+      if (users.get(i).id.equals(user.id)) { users.set(i, user); break; }
+    }
+    writeUsers(users);
+
+    return me(authHeader);
   }
 
   public void logout(String authHeader) {
@@ -166,6 +219,26 @@ public class AuthService {
 
   private String normalizeIdentifier(String value) {
     return value.trim().toLowerCase();
+  }
+
+  /**
+   * Finds a user by email identifier OR by mobile number.
+   * This lets users log in / send money using either credential.
+   *
+   * Matching rules:
+   *   1. Exact match on identifier (email, lowercased)
+   *   2. Exact match on mobileNumber (digits only, 10 chars)
+   */
+  public StoredUser findUserByAnyIdentifier(String raw, List<StoredUser> users) {
+    if (raw == null || raw.trim().isEmpty()) return null;
+    String normalized = raw.trim().toLowerCase();
+    String digitsOnly = normalized.replaceAll("[^0-9]", "");
+
+    for (StoredUser u : users) {
+      if (Objects.equals(u.identifier, normalized)) return u;
+      if (digitsOnly.length() == 10 && Objects.equals(u.mobileNumber, digitsOnly)) return u;
+    }
+    return null;
   }
 
   private String generateId() {
@@ -264,6 +337,11 @@ public class AuthService {
     public String passwordHash;
     public double balance;
     public String createdAt;
+    // Extended profile (UPI + banking)
+    public String mobileNumber;   // 10-digit Indian mobile
+    public String vpa;            // UPI VPA e.g. user@ybl
+    public String bankAccount;    // Bank account number
+    public String ifscCode;       // IFSC code e.g. HDFC0001234
   }
 
   static class Session {

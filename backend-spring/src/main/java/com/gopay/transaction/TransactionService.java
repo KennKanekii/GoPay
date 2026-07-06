@@ -71,12 +71,9 @@ public class TransactionService {
 
     String note = (body == null || body.note == null) ? "" : body.note.trim();
 
-    // --- Find recipient ---
-    String          recipientIdentifier = recipientId.toLowerCase();
-    List<StoredUser> users              = authService.readUsers();
-    StoredUser recipient = users.stream()
-        .filter(u -> Objects.equals(u.identifier, recipientIdentifier))
-        .findFirst().orElse(null);
+    // --- Find recipient (by email OR mobile number) ---
+    List<StoredUser> users = authService.readUsers();
+    StoredUser recipient   = authService.findUserByAnyIdentifier(recipientId, users);
 
     if (recipient == null) {
       throw new AuthService.BadRequestException("No GoPay account found for: " + recipientId);
