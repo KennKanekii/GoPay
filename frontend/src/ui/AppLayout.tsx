@@ -36,8 +36,8 @@ function TopNav({
   if (!loading && me) {
     rightContent = (
       <>
-        <Link to="/dashboard">
-          <div className="flex items-center gap-2 rounded-xl border border-(--gopay-border) bg-white/60 px-3 py-2">
+        <Link to="/profile">
+          <div className="flex items-center gap-2 rounded-xl border border-(--gopay-border) bg-white/60 px-3 py-2 hover:bg-white/80 transition">
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(18,179,165,0.18)] text-sm font-semibold text-(--gopay-fg)">
               {getInitials(me.name)}
             </div>

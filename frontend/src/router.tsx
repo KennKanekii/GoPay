@@ -7,6 +7,7 @@ import { Signup } from './views/Signup'
 import { SendMoney } from './views/SendMoney'
 import { CreditScore } from './views/CreditScore'
 import { FraudDashboard } from './views/FraudDashboard'
+import { Profile } from './views/Profile'
 import { NotFound } from './views/NotFound'
 import { Privacy } from './views/Privacy'
 import { Support } from './views/Support'
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: 'send', element: <SendMoney /> },
       { path: 'credit', element: <CreditScore /> },
       { path: 'fraud', element: <FraudDashboard /> },
+      { path: 'profile', element: <Profile /> },
       { path: 'terms', element: <Terms /> },
       { path: 'privacy', element: <Privacy /> },
       { path: 'support', element: <Support /> },

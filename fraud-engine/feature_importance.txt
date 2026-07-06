@@ -1,18 +1,23 @@
-Fraud model — feature importances (RandomForest):
+Fraud model feature importances (xgboost_v2):
+Data: SDV-enhanced (fraud_sdv_data.csv, 80,000 rows)
 
-  amount_sent_last_1h            0.3368  ####################
-  amount                         0.1409  ########
-  txns_last_1h                   0.1031  ######
-  amount_to_avg_ratio            0.0891  #####
-  is_blacklisted                 0.0708  ####
-  balance_after_ratio            0.0679  ####
-  amount_to_balance_ratio        0.0492  ##
-  amount_sent_last_24h           0.0431  ##
-  account_age_days               0.0243  #
-  unique_recipients_24h          0.0240  #
-  txns_last_24h                  0.0218  #
-  is_new_recipient               0.0177  #
-  is_round_amount                0.0060  
-  hour_of_day                    0.0037  
-  is_night                       0.0012  
-  is_weekend                     0.0002  
+  amount_sent_last_1h            0.4508  ###########################
+  balance_after_ratio            0.0814  ####
+  is_new_recipient               0.0638  ###
+  vpa_risk_score                 0.0465  ##
+  is_round_amount                0.0461  ##
+  is_night                       0.0410  ##
+  amount_to_balance_ratio        0.0398  ##
+  is_blacklisted                 0.0324  #
+  ifsc_is_valid                  0.0296  #
+  txns_last_1h                   0.0290  #
+  sender_has_vpa                 0.0229  #
+  amount                         0.0196  #
+  amount_to_avg_ratio            0.0177  #
+  amount_zscore                  0.0160  
+  amount_sent_last_24h           0.0124  
+  is_weekend                     0.0117  
+  account_age_days               0.0103  
+  hour_of_day                    0.0102  
+  txns_last_24h                  0.0101  
+  unique_recipients_24h          0.0086  

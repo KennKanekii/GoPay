@@ -283,7 +283,6 @@ export function FraudDashboard() {
                     </div>
                     <div className="text-right shrink-0">
                       <div className="text-xs text-(--gopay-muted)">{formatDate(ev.createdAt)}</div>
-                      <div className="mt-1 text-xs text-gray-400">{ev.model.replaceAll('_', ' ')}</div>
                     </div>
                   </div>
                 </div>

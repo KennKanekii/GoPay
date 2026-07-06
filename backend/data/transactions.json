@@ -62,4 +62,20 @@
   "fraudRiskLevel" : "LOW",
   "fraudSignals" : [ ],
   "fraudRecommendation" : "ALLOW"
+}, {
+  "id" : "txn_1d6437d503b0b1d9",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toUserId" : "user_05d311666557b468",
+  "toName" : "Rahul",
+  "toIdentifier" : "rahul@abc.com",
+  "amount" : 500.0,
+  "note" : "dinner",
+  "status" : "SUCCESS",
+  "createdAt" : "2026-04-05T13:58:34.621063900Z",
+  "fraudScore" : 1,
+  "fraudRiskLevel" : "LOW",
+  "fraudSignals" : [ ],
+  "fraudRecommendation" : "ALLOW"
 } ]

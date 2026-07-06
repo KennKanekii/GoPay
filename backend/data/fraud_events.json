@@ -24,4 +24,30 @@
   "signals" : [ ],
   "model" : "ml_random_forest",
   "createdAt" : "2026-04-05T11:03:02.420155Z"
+}, {
+  "id" : "fe_1775397514612",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toIdentifier" : "rahul@abc.com",
+  "amount" : 500.0,
+  "fraudScore" : 1,
+  "riskLevel" : "LOW",
+  "recommendation" : "ALLOW",
+  "signals" : [ ],
+  "model" : "ml_random_forest",
+  "createdAt" : "2026-04-05T13:58:34.613495300Z"
+}, {
+  "id" : "fe_1775397908452",
+  "fromUserId" : "user_90ba1a56ad5dd250",
+  "fromName" : "Yash Vardhan Sharma",
+  "fromIdentifier" : "yash.rpsp@gmail.com",
+  "toIdentifier" : "jack@abc.com",
+  "amount" : 500.0,
+  "fraudScore" : 90,
+  "riskLevel" : "CRITICAL",
+  "recommendation" : "BLOCK",
+  "signals" : [ "vpa_spoofing_detected" ],
+  "model" : "vpa_levenshtein",
+  "createdAt" : "2026-04-05T14:05:08.452294700Z"
 } ]

@@ -5,15 +5,23 @@
   "passwordSalt" : "48b7e05c9e35bfa53dc8d20e2eb51c11",
   "passwordHash" : "5dbd5a107ba6cbb069f68748474fba645b8dd9855e3dd2001a601d075f0483bd",
   "balance" : 10000.0,
-  "createdAt" : "2026-03-20T08:41:34.200Z"
+  "createdAt" : "2026-03-20T08:41:34.200Z",
+  "mobileNumber" : null,
+  "vpa" : null,
+  "bankAccount" : null,
+  "ifscCode" : null
 }, {
   "id" : "user_90ba1a56ad5dd250",
   "name" : "Yash Vardhan Sharma",
   "identifier" : "yash.rpsp@gmail.com",
   "passwordSalt" : "8f9013a522e6578dba252cb1a50a27fd",
   "passwordHash" : "148969dcb4f924b78927c98f6a069eb577f2fef398c49aa66722713141f66c3e",
-  "balance" : 10000.0,
-  "createdAt" : "2026-03-20T08:43:47.349Z"
+  "balance" : 9500.0,
+  "createdAt" : "2026-03-20T08:43:47.349Z",
+  "mobileNumber" : null,
+  "vpa" : null,
+  "bankAccount" : null,
+  "ifscCode" : null
 }, {
   "id" : "user_118fcf72db9892b2",
   "name" : "Demo User",
@@ -21,7 +29,11 @@
   "passwordSalt" : "e2e724f5aa2ffe85ea847dc800ce921f",
   "passwordHash" : "e6d6e7a84e7c446ec43c1db2cc183c540a6b40cd0da49a553b53fc303f9b53c1",
   "balance" : 10000.0,
-  "createdAt" : "2026-03-20T09:53:36.889846100Z"
+  "createdAt" : "2026-03-20T09:53:36.889846100Z",
+  "mobileNumber" : null,
+  "vpa" : null,
+  "bankAccount" : null,
+  "ifscCode" : null
 }, {
   "id" : "user_811d543c250ef071",
   "name" : "Harsh",
@@ -29,5 +41,45 @@
   "passwordSalt" : "5a7dcda1a6c12d0d93f82a2de5880602",
   "passwordHash" : "afa7255f73908a58910d8fd94fd6575c090cf1d9f15cb058e66aa50f48a8149b",
   "balance" : 10000.0,
-  "createdAt" : "2026-04-04T08:43:30.415953Z"
+  "createdAt" : "2026-04-04T08:43:30.415953Z",
+  "mobileNumber" : null,
+  "vpa" : null,
+  "bankAccount" : null,
+  "ifscCode" : null
+}, {
+  "id" : "user_d2f09c0f60b311dd",
+  "name" : "Yash Sharma",
+  "identifier" : "bt21eee101@students.vnit.ac.in",
+  "passwordSalt" : "649436143c14ed22987a876b4ba274c1",
+  "passwordHash" : "7010a67bee7f3846af612fda23b3bd28794856ecda4ba3b5c5e0c3e11954c0f5",
+  "balance" : 10000.0,
+  "createdAt" : "2026-04-05T13:54:20.650180Z",
+  "mobileNumber" : "7976521901",
+  "vpa" : null,
+  "bankAccount" : null,
+  "ifscCode" : null
+}, {
+  "id" : "user_05d311666557b468",
+  "name" : "Rahul",
+  "identifier" : "rahul@abc.com",
+  "passwordSalt" : "23b9d86c2d48af197330775b1735f752",
+  "passwordHash" : "dca5e27b24ababc1b43fe98239423a8753b2e3ae65ee5869c7ce88b3d97c2606",
+  "balance" : 10500.0,
+  "createdAt" : "2026-04-05T13:56:44.175916300Z",
+  "mobileNumber" : "9876897612",
+  "vpa" : null,
+  "bankAccount" : null,
+  "ifscCode" : null
+}, {
+  "id" : "user_47c519d344b7d78d",
+  "name" : "jack",
+  "identifier" : "jack@abc.com",
+  "passwordSalt" : "9067362323d91b02411f6a3ef9274fc1",
+  "passwordHash" : "a0218327712a48d334423072c1e861532968b6b40cacf7746fbe73375c30e2fd",
+  "balance" : 10000.0,
+  "createdAt" : "2026-04-05T14:03:49.981717Z",
+  "mobileNumber" : "1234567891",
+  "vpa" : "jack@0ksbi",
+  "bankAccount" : "00776659765432",
+  "ifscCode" : "SBIF0234567"
 } ]

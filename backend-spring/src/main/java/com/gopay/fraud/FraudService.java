@@ -98,6 +98,37 @@ public class FraudService {
     List<Transaction> recentSent = recentSentBy(sender.id);
     FraudFeatures feat = buildFeatures(sender, recipient, amount, recentSent);
 
+    // --- Layer 0: VPA Spoofing + IFSC Fraud (hard signals, computed first) ---
+    enrichWithVpaAndIfsc(feat, recipient);
+
+    // Layer 0a: VPA spoofing detected — immediate BLOCK
+    if (feat.vpaRiskScore >= 80) {
+      FraudAssessment blocked = new FraudAssessment();
+      blocked.fraudScore     = 90;
+      blocked.riskLevel      = "CRITICAL";
+      blocked.recommendation = "BLOCK";
+      blocked.signals        = Arrays.asList("vpa_spoofing_detected");
+      blocked.signalLabels   = Arrays.asList(
+          "VPA spoofing detected: recipient handle closely resembles a legitimate UPI handle.");
+      blocked.model          = "vpa_levenshtein";
+      logEvent(sender, recipient, amount, blocked);
+      return blocked;
+    }
+
+    // Layer 0b: Invalid IFSC + large amount — hard BLOCK
+    if (feat.ifscIsValid == 0 && amount >= 5_000) {
+      FraudAssessment blocked = new FraudAssessment();
+      blocked.fraudScore     = 85;
+      blocked.riskLevel      = "CRITICAL";
+      blocked.recommendation = "BLOCK";
+      blocked.signals        = Arrays.asList("invalid_ifsc");
+      blocked.signalLabels   = Arrays.asList(
+          "Transaction blocked: recipient IFSC code is invalid or unregistered.");
+      blocked.model          = "ifsc_validator";
+      logEvent(sender, recipient, amount, blocked);
+      return blocked;
+    }
+
     // --- Layer 1: Blacklist (hard block, no ML needed) ---
     if (feat.isBlacklisted == 1) {
       FraudAssessment blocked = new FraudAssessment();
@@ -204,6 +235,16 @@ public class FraudService {
     // Blacklist check
     boolean blacklisted = isBlacklisted(recipient.identifier);
 
+    // Amount z-score: (amount - mean_sent) / std_sent
+    double meanSent = recentSent.isEmpty() ? amount
+        : recentSent.stream().mapToDouble(t -> t.amount).average().orElse(amount);
+    double stdSent  = 1.0;
+    if (recentSent.size() > 1) {
+      double sumSq = recentSent.stream().mapToDouble(t -> Math.pow(t.amount - meanSent, 2)).sum();
+      stdSent = Math.sqrt(sumSq / recentSent.size());
+    }
+    double amountZscore = (amount - meanSent) / Math.max(stdSent, 1.0);
+
     FraudFeatures f = new FraudFeatures();
     f.amount                = amount;
     f.amountToBalanceRatio  = amount / Math.max(balance, 1);
@@ -221,7 +262,72 @@ public class FraudService {
     f.isRoundAmount         = (amount > 500 && amount % 1000 < 1) ? 1 : 0;
     f.isBlacklisted         = blacklisted ? 1 : 0;
     f.balanceAfterRatio     = Math.max(0, balance - amount) / Math.max(balance, 1);
+    f.amountZscore          = amountZscore;
+    f.senderHasVpa          = (sender.vpa != null && !sender.vpa.isEmpty()) ? 1 : 0;
+    // vpaRiskScore and ifscIsValid are populated by enrichWithVpaAndIfsc() after this
+    f.vpaRiskScore          = 0;
+    f.ifscIsValid           = 1; // default: assume valid until checked
     return f;
+  }
+
+  /**
+   * Layer 0 enrichment: calls Python /vpa-check and /ifsc-validate
+   * to compute vpaRiskScore and ifscIsValid for the recipient.
+   * Falls back to safe defaults if the Python service is unavailable.
+   */
+  @SuppressWarnings("unchecked")
+  private void enrichWithVpaAndIfsc(FraudFeatures feat, StoredUser recipient) {
+    // --- VPA check ---
+    try {
+      String recipientVpa = recipient.vpa;
+      if (recipientVpa != null && !recipientVpa.isEmpty()) {
+        Map<String, Object> vpaBody = new HashMap<>();
+        vpaBody.put("vpa", recipientVpa);
+        byte[]            vpaPayload = objectMapper.writeValueAsBytes(vpaBody);
+        URL               vpaUrl     = new URL("http://localhost:5002/vpa-check");
+        HttpURLConnection vpaConn    = (HttpURLConnection) vpaUrl.openConnection();
+        vpaConn.setRequestMethod("POST");
+        vpaConn.setRequestProperty("Content-Type", "application/json");
+        vpaConn.setDoOutput(true);
+        vpaConn.setConnectTimeout(1_000);
+        vpaConn.setReadTimeout(1_000);
+        try (OutputStream os = vpaConn.getOutputStream()) { os.write(vpaPayload); }
+        if (vpaConn.getResponseCode() == 200) {
+          byte[] resp = readStream(vpaConn.getInputStream());
+          Map<String, Object> json = objectMapper.readValue(resp, Map.class);
+          Object rs = json.get("risk_score");
+          if (rs instanceof Number) feat.vpaRiskScore = ((Number) rs).intValue();
+        }
+      }
+    } catch (Exception e) {
+      // VPA service unavailable — use 0 (safe default)
+    }
+
+    // --- IFSC check ---
+    try {
+      String ifsc = recipient.ifscCode;
+      if (ifsc != null && !ifsc.isEmpty()) {
+        Map<String, Object> ifscBody = new HashMap<>();
+        ifscBody.put("ifsc", ifsc);
+        byte[]            ifscPayload = objectMapper.writeValueAsBytes(ifscBody);
+        URL               ifscUrl     = new URL("http://localhost:5002/ifsc-validate");
+        HttpURLConnection ifscConn    = (HttpURLConnection) ifscUrl.openConnection();
+        ifscConn.setRequestMethod("POST");
+        ifscConn.setRequestProperty("Content-Type", "application/json");
+        ifscConn.setDoOutput(true);
+        ifscConn.setConnectTimeout(1_000);
+        ifscConn.setReadTimeout(1_000);
+        try (OutputStream os = ifscConn.getOutputStream()) { os.write(ifscPayload); }
+        if (ifscConn.getResponseCode() == 200) {
+          byte[] resp = readStream(ifscConn.getInputStream());
+          Map<String, Object> json = objectMapper.readValue(resp, Map.class);
+          Object valid = json.get("is_valid");
+          if (valid instanceof Boolean) feat.ifscIsValid = ((Boolean) valid) ? 1 : 0;
+        }
+      }
+    } catch (Exception e) {
+      // IFSC service unavailable — default to valid (1)
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -504,6 +610,10 @@ public class FraudService {
     m.put("is_round_amount",         f.isRoundAmount);
     m.put("is_blacklisted",          f.isBlacklisted);
     m.put("balance_after_ratio",     f.balanceAfterRatio);
+    m.put("vpa_risk_score",          f.vpaRiskScore);
+    m.put("ifsc_is_valid",           f.ifscIsValid);
+    m.put("amount_zscore",           f.amountZscore);
+    m.put("sender_has_vpa",          f.senderHasVpa);
     return m;
   }
 
@@ -545,6 +655,11 @@ public class FraudService {
     public int    isRoundAmount;
     public int    isBlacklisted;
     public double balanceAfterRatio;
+    // v2 additions
+    public int    vpaRiskScore;    // 0-100 from Levenshtein VPA check
+    public int    ifscIsValid;     // 1 = valid, 0 = invalid/unknown
+    public double amountZscore;    // z-score of amount vs sender history
+    public int    senderHasVpa;    // 1 if sender registered a UPI VPA
   }
 
   public static class FraudEvent {
