@@ -13,8 +13,29 @@ backend-spring/target/
 **/.env.production
 !**/.env.example
 
-# Local runtime data
-backend/data/sessions.json
+# ─────────────────────────────────────────────────────────────────────────────
+# Local runtime data — DENY BY DEFAULT.
+#
+# users.json / transactions.json / fraud_events.json were previously committed
+# and pushed to a public remote, exposing password salts+hashes, bank account
+# numbers, IFSC codes, VPAs, and mobile numbers. History was purged with
+# git-filter-repo on 2026-08-03. Do not narrow these rules to specific
+# filenames again — a new runtime file must not be able to slip through.
+# ─────────────────────────────────────────────────────────────────────────────
+backend/data/
+**/data/*.json
+!**/data/*.example.json
+!**/data/seed/**
+
+# Credentials & key material
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+**/secrets/
+credentials.json
+service-account*.json
 
 # Logs & OS
 *.log
